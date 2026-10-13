@@ -27,7 +27,7 @@ The repository includes Markov chain Monte Carlo (MCMC) implementations, simulat
 ## Repository contents
 
 | File or directory | Purpose |
-|------------------------------------|------------------------------------|
+|----|----|
 | `Additional_functions.R` | Supporting functions used by analyses |
 | `univariate_MCMC.R` | Single-response MNP MCMC |
 | `Bivariate_joint_S.R` | Bivariate MNP with joint updating of scale parameters |
@@ -76,5 +76,4 @@ Ahsan, M. M., & Chakraborty, A. *A novel hierarchical constrained covariance mod
 
 **Md. Moinul Ahsan**\
 Department of Biostatistics, Virginia Commonwealth University\
-Email: [ahsanm8\@vcu.edu](mailto:ahsanm8@vcu.edu){.email}
-
+Email: [ahsanm8\@vcu.edu](mailto:ahsanm8@vcu.edu)
