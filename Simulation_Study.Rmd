@@ -1,0 +1,2087 @@
+---
+title: "Simulation_Study"
+output: html_document
+date: "2026-10-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load all the required packages and functions
+
+please set the path accordingly 
+```{r}
+if(!require(pacman)) install.packages("pacman"); pacman::p_load(mvtnorm, abind, purrr, fastDummies, pROC, car, LaplacesDemon, HDInterval, bayesm, MASS,
+                                                                patchwork,ggplot2,tidyr,dplyr,purrr,ggh4x,coda,gt,kableExtra,knitr,MNP,philentropy)
+
+
+# path <- " "  #please set the path accordingly
+# setwd(path)
+
+source(file.path(path, "Additional_functions.R"))
+source(file.path(path, "univariate_MCMC.R"))
+source(file.path(path, "BN12_MCMC.R"))
+source(file.path(path, "Category_specific_X_MCMC.R"))
+source(file.path(path, "Bivariate_joint_S.R"))
+source(file.path(path, "Bivariate_conditional_S.R"))
+
+```
+
+# Simulation Study 1
+
+```{r}
+################################################
+# Simulation Study 1
+################################################
+# Set random seed for reproducibility
+set.seed(12345)
+
+# Simulation parameters
+n <- 2000  # Number of observations
+k <- 4    # Number of categories (must match the dimensions of sigma) 
+p <- 4    # Number of predictors (including intercept)
+
+# Simulate design matrix (X) with intercept
+X <- cbind(1, matrix(rnorm(n * (p - 1)), n, p - 1))  # n x p matrix
+
+# Simulate beta coefficients
+beta <- matrix(c(1.9,-2.75,-2.9,3,-2.8,-9.5,2.5,-.15,.6,-.72,-3.2,5), nrow =p )  # p x k matrix
+
+true_beta<-beta #columns represent category
+true_beta_vector<-matrix(c(true_beta),ncol=1)
+
+# Compute mean utilities (y_mean) for each observation and category
+y_mean <- X %*% beta  # n x k matrix
+
+
+
+# Use provided Sigma as the covariance matrix
+sigma <- matrix(c(2, 0.5, -2, 
+                  0.5, 2, 0.2, 
+                  -2, 0.2, 4), nrow = 3)
+
+
+true_sigma<-sigma
+
+
+# Generate latent utilities (W)
+latent_utilities <- (t(apply(y_mean, 1, function(mu) mvrnorm(1, mu, sigma)))) 
+
+W <- cbind(rep(0,n),latent_utilities )
+
+
+# Simulate observed responses
+y <- apply(W, 1, which.max)
+
+data<-data.frame(X,y)
+
+```
+
+## To generate Table 1 run the code below
+
+Run the code below to reproduce Table 1 using the grid-based and shifted-beta proposal methods. For the shifted-beta method, change kappa to 50, 100, and 150 and run the corresponding code for each value.
+
+```{r}
+
+#######################################################
+## To generate Table 1
+#######################################################
+
+nit=1000
+nmc=400000
+nthin=200
+tau2=0.025^2
+lamda2=100
+proposal_step=.06
+
+set.seed(12345)
+MCMC_GridR_1st_simulation<-run_multinomial_univariate_mcmc(X, y,
+                                                            nit=nit, nmc=nmc, nthin=nthin,
+                                                            tau2=tau2,lamda2=lamda2,
+                                                            proposal_step=proposal_step,
+                                                            kappa = NULL,
+                                                            S_update_method = "joint",
+                                                            R_update_method = "grid")
+
+
+save(MCMC_GridR_1st_simulation,file = file.path(path, "MCMC_GridR_1st_simulation.RData"))
+
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_GridR_1st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+
+
+
+set.seed(12345)
+
+kappa<-50 # change user input also to 100 and 150
+
+MCMC_shifted_beta_1st_simulation<-run_multinomial_univariate_mcmc(X, y,
+                                                                 nit=nit, nmc=nmc, nthin=nthin,
+                                                                 tau2=tau2,lamda2=lamda2,
+                                                                 proposal_step=proposal_step,
+                                                                 kappa = kappa,
+                                                                 S_update_method = "joint",
+                                                                 R_update_method = "shifted_beta")
+
+
+save(MCMC_shifted_beta_1st_simulation,file = file.path(path, "MCMC_shifted_beta_1st_simulation.RData"))
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_shifted_beta_1st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+```
+
+## To generate Table 2 run the code below
+
+Run the code below to reproduce Table 2 for comparing the conditional $S$ update, joint $S$ update, and BN12 methods. The results for the joint $S$ update are identical to those in the first row of Table 1 and do not need to be recomputed.
+
+```{r}
+
+#########################
+## To generate Table 2
+#########################
+
+nit=1000
+nmc=400000
+nthin=200
+tau2=.04^2
+lamda2=100
+proposal_step=.06
+
+set.seed(12345)
+MCMC_Conditional_S_1st_simulation<-run_multinomial_univariate_mcmc(X, y,
+                                                           nit=nit, nmc=nmc, nthin=nthin,
+                                                           tau2=tau2,lamda2=lamda2,
+                                                           proposal_step=proposal_step,
+                                                           kappa = NULL,
+                                                           S_update_method = "conditional",
+                                                           R_update_method = "grid")
+
+
+save(MCMC_Conditional_S_1st_simulation,file = file.path(path, "MCMC_Conditional_S_1st_simulation.RData"))
+
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_Conditional_S_1st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+
+
+# 2nd row of table 2 is identical of 1st row of table 1 since both contain output of Joint S 1st simulated dataset.
+
+
+set.seed(12345)
+MCMC_BN12_1st_simulation <-run_multinomial_univariate_mcmc_BN12(
+                                                               X = X,
+                                                               y = y,
+                                                               nit = nit,
+                                                               nmc = nmc,
+                                                               nthin = nthin)
+
+save(MCMC_BN12_1st_simulation,file = file.path(path, "MCMC_BN12_1st_simulation.RData"))
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_BN12_1st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+```
+
+## To generate Figure 1 run the code below
+
+Run the code below to reproduce Figure 1, which compares the posterior distributions of the regression coefficients and covariance parameters obtained using the joint $S$ and BN12 methods.
+
+```{r}
+
+###########################
+## To generate Figure 1
+###########################
+
+# Posterior samples on the SAME scale
+# Joint S uses product-of-variances = 1 identification.
+Joint_S_beta  <- MCMC_GridR_1st_simulation$beta_final_vector
+Joint_S_sigma <- MCMC_GridR_1st_simulation$sigma2_final
+
+# BN12 trace-constrained draws must be RESCALED before comparison.
+BN12_beta  <- MCMC_BN12_1st_simulation$BN12_Trace_beta_our_scale
+BN12_sigma <- MCMC_BN12_1st_simulation$BN12_Trace_sigma_our_scale
+
+q <- nrow(true_sigma)                     # number of non-baseline categories
+p <- nrow(as.matrix(true_beta))          # predictors, including intercept
+stopifnot(ncol(as.matrix(true_beta)) == q,
+          nrow(Joint_S_beta) == p*q, nrow(BN12_beta) == p*q,
+          all(dim(Joint_S_sigma)[1:2] == q),
+          all(dim(BN12_sigma)[1:2] == q))
+
+# Transform the true values to the identification scale of Joint S.
+c_true <- prod(diag(true_sigma))^(1/q)
+scaled_true_beta  <- c(true_beta) / sqrt(c_true)
+scaled_true_sigma <- true_sigma / c_true  # do NOT round before plotting
+
+model_colors <- c("Joint S" = "#1b9e77", "BN12" = "purple")
+
+# Mark the true value red when it lies outside EITHER model's 95% HDI.
+# The criterion is checked separately for each posterior distribution.
+true_line_color <- function(draws_joint, draws_BN12, truth) {
+  hj <- HDInterval::hdi(draws_joint, credMass = 0.95)
+  hb <- HDInterval::hdi(draws_BN12, credMass = 0.95)
+  if (truth >= hj[1] && truth <= hj[2] &&
+      truth >= hb[1] && truth <= hb[2]) "black" else "red"
+}
+
+# ------------------------------------------------------------------
+# FIGURE 1 PANEL 1: regression coefficients
+# ------------------------------------------------------------------
+param_labels <- c("Intercept", paste0("Covariate ", seq_len(p - 1)))
+plot_list <- vector("list", p*q)
+
+for (i in seq_len(p*q)) {
+  cat_index <- (i - 1) %/% p + 1
+  cov_index <- (i - 1) %% p + 1
+  truth <- scaled_true_beta[i]
+  line_color <- true_line_color(Joint_S_beta[i, ], BN12_beta[i, ], truth)
+  
+  df_param <- data.frame(
+    Draw = c(Joint_S_beta[i, ], BN12_beta[i, ]),
+    Model = rep(c("Joint S", "BN12"),
+                times = c(ncol(Joint_S_beta), ncol(BN12_beta)))
+  )
+  
+  plot_list[[i]] <- ggplot(df_param, aes(x = Draw, color = Model)) +
+    geom_density(linewidth = 1.2) +
+    geom_vline(xintercept = truth, color = line_color,
+               linetype = "dashed", linewidth = 1.2) +
+    scale_color_manual(values = model_colors) +
+    labs(x = NULL,
+         y = if (cov_index == 1) paste("Category", cat_index) else NULL,
+         title = if (cat_index == 1) param_labels[cov_index] else NULL) +
+    theme_minimal(base_size = 26) +
+    theme(axis.text = element_blank(), axis.ticks = element_blank(),
+          plot.title = element_text(size = 26, hjust = 0.5),
+          legend.position = "none")
+}
+
+panel1 <- patchwork::wrap_plots(plot_list, nrow = q, ncol = p)
+ggsave(filename = file.path(path, "Figure_1_panel_1.png"),
+       plot = panel1, width = 20, height = 7, dpi = 200, units = "in")
+
+
+# ------------------------------------------------------------------
+# FIGURE 1 PANEL 2: variances and covariances (lower triangle)
+# ------------------------------------------------------------------
+gather_posterior <- function(arr, label) {
+  d <- dim(arr)[1]
+  entries <- vector("list", d * (d + 1)/2)
+  a <- 0L
+  for (row in seq_len(d)) {
+    for (col in seq_len(row)) {
+      a <- a + 1L
+      entries[[a]] <- data.frame(
+        Model = label, Row = row, Col = col,
+        Value = as.numeric(arr[row, col, ])
+      )
+    }
+  }
+  dplyr::bind_rows(entries)
+}
+
+df_all <- dplyr::bind_rows(
+  gather_posterior(Joint_S_sigma, "Joint S"),
+  gather_posterior(BN12_sigma, "BN12")
+)
+
+line_data <- expand.grid(Row = seq_len(q), Col = seq_len(q)) |>
+  dplyr::filter(Col <= Row) |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    TrueValue = scaled_true_sigma[Row, Col],
+    LineColor = true_line_color(
+      Joint_S_sigma[Row, Col, ],
+      BN12_sigma[Row, Col, ],
+      TrueValue
+    )
+  ) |>
+  dplyr::ungroup()
+
+# Print parameters for which at least one method's 95% HDI misses the truth.
+print(line_data |> dplyr::filter(LineColor == "red"))
+
+category_labels <- paste("Category", seq_len(q))
+df_all <- df_all |>
+  dplyr::mutate(
+    Row = factor(Row, levels = seq_len(q), labels = category_labels),
+    Col = factor(Col, levels = seq_len(q), labels = category_labels)
+  )
+line_data <- line_data |>
+  dplyr::mutate(
+    Row = factor(Row, levels = seq_len(q), labels = category_labels),
+    Col = factor(Col, levels = seq_len(q), labels = category_labels)
+  )
+
+panel2 <- ggplot() +
+  geom_density(data = df_all, aes(x = Value, color = Model),
+               linewidth = 1.2) +
+  geom_vline(data = line_data,
+             aes(xintercept = TrueValue, color = LineColor),
+             linetype = "dashed", linewidth = 1.2) +
+  ggh4x::facet_grid2(Row ~ Col, scales = "free", independent = "all",
+                     switch = "y") +
+  scale_color_manual(values = c(model_colors, "black" = "black", "red" = "red"),
+                     breaks = names(model_colors), guide = "none") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 26) +
+  theme(strip.text.x = element_blank(),
+        strip.text.y = element_text(size = 26),
+        axis.text = element_blank(), axis.ticks = element_blank(),
+        legend.position = "none")
+
+ggsave(filename = file.path(path, "Figure_1_panel_2.png"),
+       plot = panel2, width = 20, height = 7, dpi = 200, units = "in")
+
+```
+
+Run the code below to compare the predictive performance of the joint $S$ and BN12 methods using 30 repeated random training-test splits, with 5% of the data reserved for testing in each repetition. The code computes posterior predictive probabilities for both methods and saves the results for subsequent performance evaluation.
+
+```{r}
+
+############################################################
+# Prediction: Joint S vs BN12
+# 30 repeated random splits (5% test data)
+############################################################
+
+nit=1000
+nmc=400000
+nthin=200
+tau2=0.025^2
+lamda2=100
+proposal_step=.06
+
+
+# Joint S
+estimated_PP_list_Joint_S <- list()
+
+# BN12
+estimated_PP_list_BN12 <- list()
+
+# True probabilities and test responses
+true_PP_list <- list()
+test_Y_list <- list()
+
+max_cv <- 30
+
+for (cv in 1:max_cv) {
+  
+  set.seed(12345 + cv)
+  
+  ##########################################################
+  # Split data
+  ##########################################################
+  
+  index <- sample(
+    nrow(data),
+    size = nrow(data) * 0.05,
+    replace = FALSE
+  )
+  
+  test_data <- as.matrix(data[index, ])
+  train_data <- as.matrix(data[-index, ])
+  
+  X <- as.matrix(train_data[, -ncol(train_data)])
+  y <- as.numeric(train_data[, ncol(train_data)])
+  
+  X_test <- as.matrix(test_data[, -ncol(test_data)])
+  y_test <- as.numeric(test_data[, ncol(test_data)])
+  
+  test_x_tilda <- diag(k - 1) %x% X_test
+  
+  true_X_test_Beta <- matrix(
+    test_x_tilda %*% c(true_beta),
+    ncol = k - 1
+  )
+  
+  n_test <- length(y_test)
+  
+  ##########################################################
+  # Joint S MCMC
+  ##########################################################
+  
+  MCMC_Joint_S <- run_multinomial_univariate_mcmc(
+    X, y,
+    nit = nit,
+    nmc = nmc,
+    nthin = nthin,
+    tau2 = tau2,
+    lamda2 = lamda2,
+    proposal_step = proposal_step,
+    kappa = NULL,
+    S_update_method = "joint",
+    R_update_method = "grid"
+  )
+  
+  Joint_S_beta <- MCMC_Joint_S$beta_final_vector
+  Joint_S_sigma <- MCMC_Joint_S$sigma2_final
+  
+  ##########################################################
+  # BN12 MCMC
+  ##########################################################
+  
+  MCMC_BN12 <- run_multinomial_univariate_mcmc_BN12(
+    X = X,
+    y = y,
+    nit = nit,
+    nmc = nmc,
+    nthin = nthin
+  )
+  
+  BN12_beta <- MCMC_BN12$BN12_Trace_beta
+  BN12_sigma <- MCMC_BN12$BN12_Trace_sigma
+  
+  ##########################################################
+  # True probabilities
+  ##########################################################
+  
+  true_PP <- apply(
+    matrix(1:k, ncol = 1),
+    1,
+    new_probability_mnp_1response,
+    mu = true_X_test_Beta,
+    sigma = true_sigma,
+    r = 250,
+    Halton_choice = FALSE
+  )
+  
+  true_PP_list[[cv]] <- true_PP
+  
+  ##########################################################
+  # Estimated probabilities: Joint S
+  ##########################################################
+  
+  estimated_PP_Joint_S <- array(
+    NA_real_,
+    dim = c(n_test, k, ncol(Joint_S_beta))
+  )
+  
+  for (i in seq_len(ncol(Joint_S_beta))) {
+    
+    test_X_BETA_tilda <- colSums(
+      t(test_x_tilda) * c(Joint_S_beta[, i])
+    )
+    
+    test_X_BETA <- matrix(
+      test_X_BETA_tilda,
+      ncol = k - 1
+    )
+    
+    estimated_PP_Joint_S[, , i] <- apply(
+      matrix(1:k, ncol = 1),
+      1,
+      new_probability_mnp_1response,
+      mu = test_X_BETA,
+      sigma = Joint_S_sigma[, , i],
+      r = 250,
+      Halton_choice = FALSE
+    )
+  }
+  
+  estimated_PP_list_Joint_S[[cv]] <- estimated_PP_Joint_S
+  
+  ##########################################################
+  # Estimated probabilities: BN12
+  ##########################################################
+  
+  estimated_PP_BN12 <- array(
+    NA_real_,
+    dim = c(n_test, k, ncol(BN12_beta))
+  )
+  
+  for (i in seq_len(ncol(BN12_beta))) {
+    
+    test_X_BETA_tilda <- colSums(
+      t(test_x_tilda) * c(BN12_beta[, i])
+    )
+    
+    test_X_BETA <- matrix(
+      test_X_BETA_tilda,
+      ncol = k - 1
+    )
+    
+    estimated_PP_BN12[, , i] <- apply(
+      matrix(1:k, ncol = 1),
+      1,
+      new_probability_mnp_1response,
+      mu = test_X_BETA,
+      sigma = BN12_sigma[, , i],
+      r = 250,
+      Halton_choice = FALSE
+    )
+  }
+  
+  estimated_PP_list_BN12[[cv]] <- estimated_PP_BN12
+  
+  ##########################################################
+  # 7. Save test responses
+  ##########################################################
+  
+  test_Y_list[[cv]] <- y_test
+  
+  cat("Completed CV:", cv, "of", max_cv, "\n")
+  
+}
+
+#Save results
+save(
+  estimated_PP_list_Joint_S,
+  estimated_PP_list_BN12,
+  true_PP_list,
+  test_Y_list,
+  file = file.path(path, "Prediction_Joint_S_BN12.RData")
+)
+
+```
+
+## Calculate Multiclass AUC and Reproduce Figure 2: ROC Curve Comparison
+
+Run the code below to calculate the multiclass AUC and generate Figure 2, comparing the predictive performance of the joint $S$ and BN12 methods. The ROC curves and corresponding AUC values are computed for each response category using a one-vs-rest approach.
+
+```{r}
+
+##########################################################
+# Calculate multiclass ROC AUC for Joint S and BN12
+##########################################################
+
+# True test classes (same for both methods)
+True_class <- unlist(test_Y_list)
+
+
+##########################################################
+# Joint S
+##########################################################
+
+Full_estimated_PP_Joint_S <- abind(
+  estimated_PP_list_Joint_S,
+  along = 1
+)
+
+dimnames(Full_estimated_PP_Joint_S)[[2]] <- as.character(1:k)
+
+auc_vec_joint_S <- sapply(
+  1:dim(Full_estimated_PP_Joint_S)[3],
+  function(i) {
+    roc_obj <- multiclass.roc(
+      True_class,
+      Full_estimated_PP_Joint_S[, , i]
+    )
+    as.numeric(roc_obj$auc)
+  }
+)
+
+cat("Joint S Mean AUC:", mean(auc_vec_joint_S), "\n")
+
+
+##########################################################
+# BN12
+##########################################################
+
+Full_estimated_PP_BN12 <- abind(
+  estimated_PP_list_BN12,
+  along = 1
+)
+
+dimnames(Full_estimated_PP_BN12)[[2]] <- as.character(1:k)
+
+auc_vec_BN12 <- sapply(
+  1:dim(Full_estimated_PP_BN12)[3],
+  function(i) {
+    roc_obj <- multiclass.roc(
+      True_class,
+      Full_estimated_PP_BN12[, , i]
+    )
+    as.numeric(roc_obj$auc)
+  }
+)
+
+cat("BN12 Mean AUC:", mean(auc_vec_BN12), "\n")
+
+
+
+
+
+
+
+
+############################################################
+# To Generate Figure 2
+############################################################
+
+# load(file.path(path, "Prediction_Joint_S_BN12.RData"))
+
+# Prediction results from the 30 CV repetitions
+estimated_PP_joint <- estimated_PP_list_Joint_S
+estimated_PP_BN12  <- estimated_PP_list_BN12
+
+############################################################
+# Combine all CV test predictions
+############################################################
+
+# Joint S
+PP_joint <- abind(estimated_PP_joint, along = 1)
+
+# BN12
+PP_BN12 <- abind(estimated_PP_BN12, along = 1)
+
+# Posterior mean probabilities across MCMC samples
+PP_joint_mean <- apply(PP_joint, c(1, 2), mean)
+PP_BN12_mean  <- apply(PP_BN12, c(1, 2), mean)
+
+############################################################
+# True classes
+############################################################
+
+True_class <- unlist(test_Y_list)
+
+# Actual internal class labels
+class_labels <- sort(unique(True_class))
+
+k <- length(class_labels)
+
+# Internal 1,2,3,4 -> Category 0,1,2,3
+display_labels <- 0:(k - 1)
+
+# Check dimensions
+stopifnot(
+  nrow(PP_joint_mean) == length(True_class),
+  nrow(PP_BN12_mean) == length(True_class),
+  ncol(PP_joint_mean) == k,
+  ncol(PP_BN12_mean) == k
+)
+
+############################################################
+# Calculate one-vs-rest ROC and AUC
+############################################################
+
+roc_joint <- vector("list", k)
+roc_BN12  <- vector("list", k)
+
+auc_joint <- numeric(k)
+auc_BN12  <- numeric(k)
+
+for (j in 1:k) {
+  
+  y_binary <- as.numeric(True_class == class_labels[j])
+  
+  # Joint S
+  roc_joint[[j]] <- roc(
+    y_binary,
+    PP_joint_mean[, j],
+    quiet = TRUE,
+    direction = "<"
+  )
+  
+  # BN12
+  roc_BN12[[j]] <- roc(
+    y_binary,
+    PP_BN12_mean[, j],
+    quiet = TRUE,
+    direction = "<"
+  )
+  
+  auc_joint[j] <- as.numeric(auc(roc_joint[[j]]))
+  auc_BN12[j]  <- as.numeric(auc(roc_BN12[[j]]))
+}
+
+############################################################
+# Save ROC plot
+############################################################
+
+png(
+  filename = file.path(path, "Figure_2.png"),
+  height = 2000,
+  width = 2000,
+  res = 300
+)
+
+par(
+  mfrow = c(2, 2),
+  mar = c(4.5, 4.5, 2.5, 1)
+)
+
+for (j in 1:k) {
+  
+  # Joint S ROC coordinates
+  joint_fpr <- 1 - roc_joint[[j]]$specificities
+  joint_tpr <- roc_joint[[j]]$sensitivities
+  
+  # BN12 ROC coordinates
+  BN12_fpr <- 1 - roc_BN12[[j]]$specificities
+  BN12_tpr <- roc_BN12[[j]]$sensitivities
+  
+  # Joint S
+  plot(
+    joint_fpr,
+    joint_tpr,
+    type = "l",
+    xlim = c(0, 1),
+    ylim = c(0, 1),
+    xaxs = "i",
+    yaxs = "i",
+    col = "#1b9e77",
+    lwd = 2.4,
+    lty = 1,
+    xlab = "",
+    ylab = "",
+    main = paste0("Category ", display_labels[j]),
+    cex.axis = 1.5,
+    cex.lab = 1.3,
+    cex.main = 1.3
+  )
+  
+  # BN12
+  lines(
+    BN12_fpr,
+    BN12_tpr,
+    col = "purple",
+    lwd = 2.3,
+    lty = 2
+  )
+  
+  # Random classifier reference line
+  abline(
+    a = 0,
+    b = 1,
+    lty = 3,
+    col = "gray60"
+  )
+  
+  # AUC values inside plot
+  legend(
+    "bottomright",
+    legend = c(
+      paste0(
+        "Joint S (AUC = ",
+        sprintf("%.4f", auc_joint[j]),
+        ")"
+      ),
+      paste0(
+        "BN12 (AUC = ",
+        sprintf("%.4f", auc_BN12[j]),
+        ")"
+      )
+    ),
+    col = c("#1b9e77", "purple"),
+    lwd = 2,
+    lty = c(1, 2),
+    bty = "n",
+    cex = 0.9
+  )
+}
+
+dev.off()
+
+
+```
+
+## Calculate Probability Distance Measures and Reproduce Figure 3
+
+Run the code below to generate Figure 3, which compares the predictive accuracy of the joint $S$ and BN12 methods using three probability distance measures: total variation distance (TVD), Kullback–Leibler (KL) divergence, and Jensen–Shannon divergence (JSD). These measures are calculated by comparing the estimated posterior predictive probabilities with the corresponding true probabilities across the repeated test samples.
+
+```{r}
+
+##########################
+# To Generate Figure 3
+#########################
+
+# # Load prediction results for Joint S and BN12
+# load(file.path(path, "Prediction_Joint_S_BN12.RData"))
+
+# ==========================================================
+# Method 1: Joint S
+# ==========================================================
+
+estimated_PP_list <- estimated_PP_list_Joint_S
+
+cat("\nCalculating distances for Joint S...\n")
+
+dist_joint <- calculate_distances(
+  estimated_PP_list,
+  true_PP_list
+)
+
+points     <- dist_joint$TVD
+points_KL  <- dist_joint$KL
+points_JSD <- dist_joint$JSD
+
+
+# ==========================================================
+# Method 2: BN12
+# ==========================================================
+
+estimated_PP_list <- estimated_PP_list_BN12
+
+cat("\nCalculating distances for BN12...\n")
+
+dist_BN12 <- calculate_distances(
+  estimated_PP_list,
+  true_PP_list
+)
+
+points1     <- dist_BN12$TVD
+points1_KL  <- dist_BN12$KL
+points1_JSD <- dist_BN12$JSD
+
+
+# ==========================================================
+# Plot: TVD, KL Divergence, and JSD
+# ==========================================================
+
+png(
+  filename = file.path(path, "Figure_3.png"),
+  width = 1800,
+  height = 650,
+  res = 150
+)
+
+par(
+  mfrow = c(1, 3),
+  mar = c(4, 4, 3, 1),
+  oma = c(4, 0, 0, 0)
+)
+
+
+
+plot_comparison <- function(x1, x2, main_title) {
+  
+  yr <- range(c(x1, x2), na.rm = TRUE)
+  
+  # Add vertical padding
+  padding <- diff(yr) * 0.05
+  
+  if (padding == 0) {
+    padding <- max(abs(yr[1]) * 0.05, 0.001)
+  }
+  
+  yr <- c(
+    yr[1] - padding,
+    yr[2] + padding
+  )
+  
+  plot(
+    seq_along(x1),
+    x1,
+    type = "b",
+    ylim = yr,
+    col = "#1b9e77",
+    lwd = 2.4,
+    pch = 17,
+    cex = 1,
+    cex.axis = 1.2,
+    xlab = "",
+    ylab = "",
+    main = main_title,
+    cex.main = 1.2
+  )
+  
+  points(
+    seq_along(x2),
+    x2,
+    type = "b",
+    col = "purple",
+    lwd = 2.3,
+    pch = 16,
+    cex = 1
+  )
+}
+
+
+# Panel 1: Total Variation Distance
+plot_comparison( points, points1, "")
+
+# Panel 2: KL Divergence
+plot_comparison(points_KL,points1_KL,"")
+
+# Panel 3: Jensen-Shannon Divergence
+plot_comparison(points_JSD,points1_JSD,"")
+
+
+par(
+  fig = c(0, 1, 0, 1),
+  oma = c(0, 0, 0, 0),
+  mar = c(0, 0, 0, 0),
+  new = TRUE
+)
+
+plot.new()
+
+legend(
+  "bottom",
+  legend = c("Joint S", "BN12"),
+  col = c("#1b9e77", "purple"),
+  lwd = 2.2,
+  pch = c(17, 16),
+  horiz = TRUE,
+  bty = "n",
+  cex = 1.2,
+  inset = c(0, 0.01)
+)
+
+dev.off()
+
+
+# Summary Table: Mean distances
+summary_table <- data.frame(
+  Method = c("Joint S", "BN12"),
+  
+  TVD = c(mean(points),mean(points1)),
+  
+  KL = c( mean(points_KL), mean(points1_KL)),
+  
+  JSD = c( mean(points_JSD), mean(points1_JSD))
+)
+
+print(summary_table, digits = 4)
+
+```
+
+# Simulation Study 2
+
+```{r}
+
+########################
+# Simulation Study 2
+########################
+
+
+
+# Set random seed for reproducibility
+set.seed(12345)
+
+# Simulation parameters
+n <- 2000  # Number of observations
+k <- 7    # Number of categories (must match the dimensions of sigma) 
+p <- 2    # Number of predictors (including intercept)
+
+m<-2  # the size of gamma
+
+# Simulate design matrix (X) with intercept
+X <- cbind(1, matrix(rnorm(n * (p - 1)), n, p - 1))  # n x p matrix
+
+beta <- matrix(c(-2, -0.40, -0.45 , 0.40, -0.76 , 1.20 ,-0.44, -0.60 ,-0.53  ,0.20 ,-3.32 , 1.00),nrow=p)
+
+true_beta<-beta
+true_beta_vector<-matrix(c(true_beta),ncol=1)
+
+# Compute mean utilities (y_mean) for each observation and category
+y_mean <- X %*% beta  # n x k matrix
+
+
+
+
+R<-diag(k-1)
+
+set.seed(12345)
+Z <- matrix(rnorm((k-1)*2,0,1),ncol=m)
+
+
+gamma<- 2* matrix(c(.2, .5), ncol = 1)
+
+log_S<-Z %*%gamma
+
+log_S=log_S-mean(log_S)
+
+
+# Use provided Sigma as the covariance matrix
+sigma <- t( c(exp(log_S)) * R) * c(exp(log_S))
+
+true_sigma<-sigma
+
+
+# Generate latent utilities (W)
+latent_utilities <- (t(apply(y_mean, 1, function(mu) mvrnorm(1, mu, sigma)))) 
+
+W <- cbind(rep(0,n),latent_utilities )
+
+
+# Simulate observed responses
+y <- apply(W, 1, which.max)
+
+print(table(y))
+
+x2<-X
+
+
+data<-data.frame(x2,y)
+
+```
+
+## Reproduce Table 3: Model Comparison for Simulation Study 2
+
+Run the code below to reproduce Table 3 by comparing the proposed joint $S$ method with the BN12 method under the simulation setting of covariate-dependent dispersion.
+
+```{r}
+##########################
+## To generate Table 3
+##########################
+
+nit=1000
+nmc=400000
+nthin=200
+tau2=0.01^2
+proposal_step=.03
+
+set.seed(12345)
+MCMC_2st_simulation<-run_multinomial_univariate_Joint_S_GridR_mcmc_withZ(X, y,
+                                                                   nit=nit, nmc=nmc, nthin=nthin,
+                                                                   tau2=tau2,
+                                                                   proposal_step=proposal_step
+                                                                   )
+
+
+save(MCMC_2st_simulation,file = file.path(path, "MCMC_2st_simulation.RData"))
+
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_2st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+
+
+
+set.seed(12345)
+MCMC_BN12_2st_simulation <-run_multinomial_univariate_mcmc_BN12(
+  X = X,
+  y = y,
+  nit = nit,
+  nmc = nmc,
+  nthin = nthin)
+
+save(MCMC_BN12_2st_simulation,file = file.path(path, "MCMC_BN12_2st_simulation.RData"))
+
+
+Grid_summary <- compare_mnp_mcmc(
+  fit = MCMC_BN12_2st_simulation,
+  X = X,
+  y = y,
+  true_beta = true_beta,
+  true_sigma = true_sigma
+)
+
+print(Grid_summary)
+
+```
+
+# Simulation study 3 (Bivariate)
+
+```{r}
+
+####################################
+# Simulation study 3
+####################################
+
+# Set random seed for reproducibility
+set.seed(12345)
+
+# Simulation parameters (different number of categories and covariates for 2 response)
+n <- 2000  # Number of observations
+k1 <- 4    # Number of categories (must match the dimensions of sigma)
+k2<-5
+p1 <- 4    # Number of predictors (including intercept)
+p2 <- 5    
+
+
+# Simulate design matrix (X) with intercept
+X1 <- cbind(1, matrix(rnorm(n * (p1 - 1)), n, p1 - 1))  # n x p matrix
+
+# Simulate beta coefficients
+beta1 <- matrix(c(1.9,-2.75,-2.9,3,-2.8,-9.5,2.5,-.15,.6,-.72,-3.2,5), nrow =p1 )  # p x k matrix
+
+
+true_beta1<-beta1
+
+# Compute mean utilities (y_mean) for each observation and category
+y_mean1 <- X1 %*% beta1  # n x k matrix
+
+
+
+
+
+# Simulate design matrix (X) with intercept
+X2 <- cbind(1, matrix(rnorm(n * (p2 - 1)), n, p2 - 1))  # n x p matrix
+
+# Simulate beta coefficients
+beta2 <- matrix(c(
+  -1.3, 0.45, 2.5, 3,
+  2, -0.5, 0.6, 0.9,
+  -0.06, 2, -0.7, 4,
+  0.22, 2, -0.2, -0.3,
+  1.8, -0.41, 0.9,  -2
+), nrow = p2)
+
+
+true_beta2<-beta2
+
+# Compute mean utilities (y_mean) for each observation and category
+y_mean2 <- X2 %*% beta2  # n x k matrix
+
+
+sigma1 <- matrix(c(2, 0.5, -2, 
+                   0.5, 2, 0.2, 
+                   -2, 0.2, 4), nrow = 3)
+
+sigma2 <- matrix(c(2,   0.5, -2,   0.2,  
+                   0.5, 2,    0.2, -0.1,  
+                   -2,  0.2,  4,   1.8,  
+                   0.2, -0.1, 1.8,  3), nrow = 4)
+
+true_sigma1<-sigma1
+true_sigma2<-sigma2
+
+
+sigma12<- matrix(c(0.15,   0.1, -.05,   0.08,
+                   0.07, 0.2,    0.13, .2,
+                   -.03,  0.1,  -.03, -.3), nrow = 3,byrow = T)
+
+
+
+true_sigma<-rbind(cbind(sigma1,sigma12),cbind(t(sigma12),sigma2)  )
+
+
+latent_utilities <- (t(apply(cbind(y_mean1,y_mean2), 1, function(mu) mvrnorm(1, mu, true_sigma)))) 
+
+
+W1 <- cbind(rep(0,n),latent_utilities[,1:3] )
+W2 <- cbind(rep(0,n),latent_utilities[,4:7]  )
+
+y1 <- apply(W1, 1, which.max)
+y2 <- apply(W2, 1, which.max)
+
+true_beta<-c(c(beta1),c(beta2))
+
+W<-cbind(W1,W2)
+
+y<-c(y1,y2)
+
+
+data1<-data.frame(X1,y1)
+data2<-data.frame(X2,y2)
+
+data<-cbind(data1,data2)
+
+```
+
+## Reproduce Table 4: Model Comparison for Simulation Study 3
+
+Run the code below to reproduce Table 4 by fitting the conditional $S$ and joint $S$ methods for the multivariate multinomial probit model. The joint $S$ results using the full covariance matrix correspond to the first row of Table 4. To obtain the second row, uncomment line 313 in Bivariate_joint_S.R and rerun the joint $S$ MCMC analysis.
+
+```{r}
+
+##########################
+## To generate Table 4
+#########################
+
+nit=1000
+nmc=400000
+nthin=200
+tau2=.04^2
+lamda2=100
+proposal_step=.08
+
+
+set.seed(12345)
+MCMC_Conditional_S_3rd_simulation<- run_multinomial_bivariate_Conditional_S_mcmc(X1,X2,y1, y2,
+                                                                                 nit=nit, nmc=nmc, nthin=nthin,
+                                                                                 tau2=tau2,lamda2=lamda2,
+                                                                                 proposal_step=proposal_step)
+
+save(MCMC_Conditional_S_3rd_simulation,file = file.path(path, "MCMC_Conditional_S_3rd_simulation.RData"))
+
+
+
+
+
+tau2=0.015^2
+
+set.seed(12345)
+MCMC_Joint_S_3rd_simulation<- run_multinomial_bivariate_Joint_S_mcmc(X1,X2,y1, y2,
+                                                                     nit=nit, nmc=nmc, nthin=nthin,
+                                                                     tau2=tau2,lamda2=lamda2,
+                                                                     proposal_step=proposal_step)
+
+
+save(MCMC_Joint_S_3rd_simulation,file = file.path(path, "MCMC_Joint_S_3rd_simulation.RData"))
+
+
+
+################
+# this output need to saved for the full matrix to generate table 4 for the next block of code 
+Conditional_S_beta<-MCMC_Conditional_S_3rd_simulation$beta_final_vector
+Conditional_S_sigma<-MCMC_Conditional_S_3rd_simulation$sigma2_final
+Conditional_S_S<-MCMC_Conditional_S_3rd_simulation$S_final
+Conditional_S_R<-MCMC_Conditional_S_3rd_simulation$R_final
+
+Joint_S_beta<-MCMC_Joint_S_3rd_simulation$beta_final_vector
+Joint_S_sigma<-MCMC_Joint_S_3rd_simulation$sigma2_final
+Joint_S_S<-MCMC_Joint_S_3rd_simulation$S_final
+Joint_S_R<-MCMC_Joint_S_3rd_simulation$R_final
+#############
+
+
+
+# this will give the table 4 1st row =Full matrix
+results_Joint_S <- compare_bivariate_mnp_mcmc(
+  fit = MCMC_Joint_S_3rd_simulation,
+  X1 = X1, X2 = X2, y1 = y1, y2 = y2,
+  true_beta = true_beta, true_sigma = true_sigma,
+  k1 = k1, k2 = k2
+)
+print(results_Joint_S)
+
+# to get the 2nd row unmute the line 313 from Bivariate_joint_S function and re run the MCMC_Joint_S_3rd_simulation
+
+
+```
+
+
+
+
+
+## Reproduce Figure 4: Posterior Distribution Comparison for Simulation Study 3
+
+Run the code below to reproduce Figure 4, which compares the posterior distributions of the regression coefficients and covariance parameters obtained using the conditional \(S\) and joint \(S\) methods for the multivariate multinomial probit model. The true parameter values are standardized to ensure a consistent identification scale.
+```{r}
+
+
+#standardized the true values
+Conditional_S_beta_y1<-Conditional_S_beta[1:12,]
+Joint_S_beta_y1<-Joint_S_beta[1:12,]
+
+Conditional_S_beta_y2<-Conditional_S_beta[-c(1:12),]
+Joint_S_beta_y2<-Joint_S_beta[-c(1:12),]
+
+c1 <- (prod(diag(true_sigma[1:3,1:3])))^(1/3)
+c2 <- (prod(diag(true_sigma[4:7,4:7])))^(1/4)
+
+
+scaled_true_beta_y1<-c(true_beta1)/sqrt(c1)
+scaled_true_beta_y2<-c(true_beta2)/sqrt(c2)
+
+std_True_sigma1 <- true_sigma[1:3,1:3] / c1
+std_True_sigma2 <- true_sigma[4:7,4:7] / c2
+
+std_True_sigma12 <- true_sigma[1:3,4:7] / sqrt(c1*c2)
+std_True_sigma21 <- true_sigma[4:7,1:3] / sqrt(c1*c2)
+
+scaled_true_sigma <- rbind( cbind(std_True_sigma1, std_True_sigma12) ,cbind(std_True_sigma21, std_True_sigma2) )  
+
+
+################################
+## Plot for Figure 4 Panel 1  ##
+################################
+
+
+categories <- rep(c("Category 1", "Category 2", "Category 3"), each = 4)
+
+parameters <- c("Intercept", "Covariate 1","Covariate 2","Covariate 3")
+
+plot_list <- vector("list", length = 12)
+
+for (i in 1:12) {
+  # combine samples for plotting
+  df_single_param <- tibble(
+    Draw = c(Conditional_S_beta_y1[i,], Joint_S_beta_y1[i,]),
+    Model = rep(c("Conditional S", "Joint S"), each = ncol(Conditional_S_beta_y1))
+  )
+  
+  true_val <- scaled_true_beta_y1[i]
+  cat_label <- categories[i]
+  param_label <- parameters[((i - 1) %% 4) + 1]
+  
+  # --- compute 95% HDI for both models combined (you can also do per-model if desired)
+  hdi_vals <- hdi(df_single_param$Draw, credMass = 0.95)
+  
+  
+  # --- determine color based on HDI inclusion
+  true_color <- if (true_val >= hdi_vals[1] && true_val <= hdi_vals[2]) "black" else "red"
+  
+  # add fake row for true value
+  df_single_param <- df_single_param %>%
+    add_row(Draw = true_val, Model = "True Value")
+  
+  show_y_label <- i %% 4 == 1
+  show_title <- i <= 4
+  
+  p <- ggplot(df_single_param, aes(x = Draw, color = Model)) +
+    geom_density(data = df_single_param %>% filter(Model != "True Value"),
+                 size = 1.2, key_glyph = "path") +
+    geom_vline(xintercept = true_val,
+               color = true_color,
+               linetype = "dashed",
+               size = 1.2) +
+    scale_color_manual(
+      values = c("Conditional S" = "purple",
+                 "Joint S" = "#1b9e77")
+    ) +
+    labs(
+      x = NULL,
+      y = if (show_y_label) cat_label else NULL,
+      title = if (show_title) param_label else NULL
+    ) +
+    theme_minimal(base_size = 20) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.title = element_text(size = 30, hjust = 0.5)
+    )
+  
+  plot_list[[i]] <- p
+}
+
+png(filename = file.path(path, "Figure_4_panel_1.png"),height = 480,width= 1700)
+
+# Combine plots with legend collected
+combined_plot <- wrap_plots(plot_list, nrow = 3, ncol = 4, guides = "collect") &
+  theme(legend.position = "none")
+
+print(combined_plot)
+
+dev.off()
+
+
+################################
+## Plot for Figure 4 Panel 2  ##
+################################
+
+categories <- rep(c("Category 1", "Category 2", "Category 3", "Category 4"), each = 5)
+
+parameters <- c("Intercept", "Covariate 1","Covariate 2","Covariate 3","Covariate 4")
+
+plot_list <- vector("list", length = 20)
+
+for (i in 1:20) {
+  # combine samples for plotting
+  df_single_param <- tibble(
+    Draw = c(Conditional_S_beta_y2[i,], Joint_S_beta_y2[i,]),
+    Model = rep(c("Conditional S", "Joint S"), each = ncol(Conditional_S_beta_y2))
+  )
+  
+  true_val <- scaled_true_beta_y2[i]
+  cat_label <- categories[i]
+  param_label <- parameters[((i-1) %% 5) + 1]
+  
+  # --- compute 95% HDI for both models combined (you can also do per-model if desired)
+  hdi_vals <- hdi(df_single_param$Draw, credMass = 0.95)
+  
+  # --- determine color based on HDI inclusion
+  true_color <- if (true_val >= hdi_vals[1] && true_val <= hdi_vals[2]) "black" else "red"
+  
+  # add fake row for true value
+  df_single_param <- df_single_param %>%
+    add_row(Draw = true_val, Model = "True Value")
+  
+  show_y_label <- i %% 5 == 1
+  show_title <- i <= 5
+  
+  p <- ggplot(df_single_param, aes(x = Draw, color = Model)) +
+    geom_density(data = df_single_param %>% filter(Model != "True Value"),
+                 size = 1.2, key_glyph = "path") +
+    geom_vline(xintercept = true_val,
+               color = true_color,
+               linetype = "dashed",
+               size = 1.2) +
+    scale_color_manual(
+      values = c("Conditional S" = "purple",
+                 "Joint S" = "#1b9e77")
+    ) +
+    labs(
+      x = NULL,
+      y = if (show_y_label) cat_label else NULL,
+      title = if (show_title) param_label else NULL
+    ) +
+    theme_minimal(base_size = 20) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.title = element_text(size = 30, hjust = 0.5)
+    )
+  
+  plot_list[[i]] <- p
+}
+
+png(filename = file.path(path, "Figure_4_panel_2.png"),height = 640,width= 1700)
+
+# Combine plots with legend collected
+combined_plot <- wrap_plots(plot_list, nrow = 4, ncol = 5, guides = "collect") &
+  theme(legend.position = "none")
+
+print(combined_plot)
+
+dev.off()
+
+
+
+################################
+## Plot for Figure 4 Panel 3  ##
+################################
+
+
+# --- Function to gather posterior samples ---
+gather_posterior <- function(sigma_array, model_name) {
+  n <- dim(sigma_array)[1]
+  df_list <- list()
+  
+  for (row in 1:n) {
+    for (col in 1:n) {
+      vals <- sigma_array[row, col, ]
+      param_type <- if (row == col) "Variance" else "Covariance"
+      param_name <- if (row == col) paste0("Var", row) else paste0("Cov", row, col)
+      
+      df_list[[length(df_list) + 1]] <- data.frame(
+        Model = model_name,
+        Row = row,
+        Col = col,
+        ParamType = param_type,
+        ParamName = param_name,
+        Value = vals
+      )
+    }
+  }
+  
+  bind_rows(df_list)
+}
+
+# --- Gather posterior draws ---
+df_separate <- gather_posterior(Conditional_S_sigma, "Conditional S")
+df_simul    <- gather_posterior(Joint_S_sigma, "Joint S")
+
+row_labels <- c(paste0("Category ", 1:3), paste0("Category  ", 1:4))
+col_labels <- c(paste0("Category ", 1:3), paste0("Category  ", 1:4))
+
+# --- Combine and prepare ---
+df_all <- bind_rows(df_separate, df_simul) %>%
+  filter(Col <= Row) %>%  # keep lower triangle + diagonal
+  mutate(
+    Row = factor(Row, levels = 1:7, labels =row_labels),
+    Col = factor(Col, levels = 1:7, labels = col_labels)
+  )
+
+
+
+# --- True value dataframe ---
+true_vals_df <- expand.grid(Row = 1:7, Col = 1:7) %>%
+  filter(Col <= Row) %>%
+  mutate(
+    TrueValue = scaled_true_sigma[cbind(Row, Col)],
+    Row = factor(Row, levels = 1:7, labels = row_labels),
+    Col = factor(Col, levels = 1:7, labels = col_labels)
+  )
+
+# --- Compute 95% HDIs per Model/Row/Col ---
+hdi_df <- df_all %>%
+  group_by(Model, Row, Col) %>%
+  summarise(
+    hdi_low = hdi(Value, credMass = 0.95)[1],
+    hdi_high = hdi(Value, credMass = 0.95)[2],
+    .groups = "drop"
+  )
+
+
+# --- Merge true values with HDIs ---
+true_vals_with_color <- expand.grid(
+  Model = c("Conditional S", "Joint S"),
+  Row = levels(df_all$Row),
+  Col = levels(df_all$Col)
+) %>%
+  left_join(true_vals_df, by = c("Row", "Col")) %>%
+  left_join(hdi_df, by = c("Model", "Row", "Col")) %>%
+  mutate(
+    InHDI = ifelse(TrueValue >= hdi_low & TrueValue <= hdi_high, TRUE, FALSE),
+    LineColor = ifelse(InHDI, "black", "red")
+  ) %>%
+  filter(!is.na(TrueValue), !is.na(LineColor))  # remove missing safely
+
+# --- Optional: print which true values are outside 95% HDI ---
+out_of_hdi <- true_vals_with_color %>%
+  filter(LineColor == "red") %>%
+  dplyr::select(all_of(c("Model", "Row", "Col", "TrueValue", "hdi_low", "hdi_high")))
+
+if (nrow(out_of_hdi) > 0) {
+  message("True values outside 95% HDI:\n")
+  print(out_of_hdi)
+}
+
+
+png(filename = file.path(path, "Figure_4_panel_3.png"),height = 700,width=1800)
+
+
+# --- Plot ---
+ggplot() +
+  # Posterior densities
+  geom_density(
+    data = df_all,
+    aes(x = Value, color = Model, linetype = Model),
+    size = 1.2, fill = NA, key_glyph = "path"
+  ) +
+  # Vertical lines for true values, color-coded by HDI inclusion
+  geom_vline(
+    data = true_vals_with_color,
+    aes(xintercept = TrueValue, color = LineColor),
+    linetype = "dashed", size = 1.2, key_glyph = "path"
+  ) +
+  facet_grid2(
+    Row ~ Col,
+    scales = "free",
+    independent = "all",
+    switch = "y"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Conditional S" = "purple",
+      "Joint S" = "#1b9e77",
+      "black" = "black",
+      "red" = "red"
+    ),
+    breaks = c("Conditional S", "Joint S"),
+    guide = "none"
+  ) +
+  scale_linetype_manual(
+    values = c(
+      "Conditional S" = "solid",
+      "Joint S" = "solid"
+    )
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 20) +
+  theme(
+    strip.text.x = element_blank(),
+    strip.text.y = element_text(size = 16,  face = "bold"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "none"
+  )
+
+
+dev.off()
+
+
+```
+
+
+
+
+## Evaluate Predictive Performance and Reproduce Figure 5: ROC Curve Comparison for Simulation Study 3
+
+Run the code below to compare the predictive performance of the conditional \(S\) and joint \(S\) methods using 30 repeated random training-test splits, with 5% of the data reserved for testing in each repetition. The code calculates the multiclass AUC and generates Figure 5, displaying one-vs-rest ROC curves and corresponding AUC values for each joint response category.
+
+```{r}
+
+nit=1000
+nmc=400000
+nthin=200
+lamda2=100
+proposal_step=.08
+
+##For prediction Conditional S and Joint S
+estimated_PP_Conditional_list<-list()
+estimated_PP_Joint_list<-list()
+true_PP_list<-list()
+test_Y_list<-list()
+
+max_cv<-30
+
+for(cv in 1:max_cv){
+  
+  set.seed(12345+cv)
+  
+  index<-sample(nrow(data),size=nrow(data)*.05,replace=F)
+  test_data<-as.matrix(data[index,])
+  train_data<-as.matrix(data[-index,])
+  
+  data1<-train_data[,c(1:(p1+1))]
+  data2<-train_data[,c((p1+2):ncol(data))]
+  
+  X1<-as.matrix(data1[,-(p1+1)])
+  X2<-as.matrix(data2[,-(p2+1)])
+  
+  y1<-as.numeric(data1[,ncol(data1)])
+  y2<-as.numeric(data2[,ncol(data2)])
+  
+  test_data1<-test_data[,c(1:(p1+1))]
+  test_data2<-test_data[,c((p1+2):ncol(data))]
+  
+  x1_test<-as.matrix(test_data1[,-(p1+1)])
+  x2_test<-as.matrix(test_data2[,-(p2+1)])
+  
+  y1_test<-as.numeric(test_data1[,ncol(test_data1)])
+  y2_test<-as.numeric(test_data2[,ncol(test_data2)])
+  
+  n_test<-nrow(test_data)
+  
+  test_x1_tilda<-diag((k1-1)) %x% x1_test
+  test_x2_tilda<-diag((k2-1)) %x% x2_test
+  
+  true_X1_Beta<-matrix(test_x1_tilda%*%c(true_beta[1:((k1-1)*p1)]),ncol=(k1-1))
+  true_X2_Beta<-matrix(test_x2_tilda%*%c(true_beta[(((k1-1)*p1)+1):length(true_beta)]),ncol=(k2-1))
+  
+  true_PP<-apply(matrix(1:(k1*k2),ncol=1),1,new_probability_mnp_2response,k1,k2,mu1=true_X1_Beta,mu2=true_X2_Beta,sigma=true_sigma,r=250,Halton_choice=FALSE)
+  true_PP_list[[cv]]<-true_PP
+  
+  test_Y_list[[cv]]<-cbind(y1_test,y2_test)
+  
+  
+  ## Conditional S
+  tau2=.04^2
+  
+  MCMC_Conditional_S<-run_multinomial_bivariate_Conditional_S_mcmc(X1,X2,y1,y2,
+                                                                   nit=nit,nmc=nmc,nthin=nthin,
+                                                                   tau2=tau2,lamda2=lamda2,
+                                                                   proposal_step=proposal_step)
+  
+  Conditional_S_beta<-MCMC_Conditional_S$beta_final_vector
+  Conditional_S_sigma<-MCMC_Conditional_S$sigma2_final
+  Conditional_S_S<-MCMC_Conditional_S$S_final
+  Conditional_S_R<-MCMC_Conditional_S$R_final
+  
+  estimated_PP_Conditional<-array(NA,dim=c(n_test,k1*k2,ncol(Conditional_S_beta)))
+  
+  for(i in 1:ncol(Conditional_S_beta)){
+    
+    test_X1_Beta<-matrix(test_x1_tilda%*%c(Conditional_S_beta[,i][1:((k1-1)*p1)]),ncol=(k1-1))
+    test_X2_Beta<-matrix(test_x2_tilda%*%c(Conditional_S_beta[,i][(((k1-1)*p1)+1):nrow(Conditional_S_beta)]),ncol=(k2-1))
+    
+    estimated_PP_Conditional[,,i]<-apply(matrix(1:(k1*k2),ncol=1),1,new_probability_mnp_2response,k1,k2,mu1=test_X1_Beta,mu2=test_X2_Beta,sigma=Conditional_S_sigma[,,i],r=250,Halton_choice=FALSE)
+  }
+  
+  estimated_PP_Conditional_list[[cv]]<-estimated_PP_Conditional
+  
+  
+  ## Joint S
+  tau2=.015^2
+  
+  MCMC_Joint_S<-run_multinomial_bivariate_Joint_S_mcmc(X1,X2,y1,y2,
+                                                       nit=nit,nmc=nmc,nthin=nthin,
+                                                       tau2=tau2,lamda2=lamda2,
+                                                       proposal_step=proposal_step)
+  
+  Joint_S_beta<-MCMC_Joint_S$beta_final_vector
+  Joint_S_sigma<-MCMC_Joint_S$sigma2_final
+  Joint_S_S<-MCMC_Joint_S$S_final
+  Joint_S_R<-MCMC_Joint_S$R_final
+  
+  estimated_PP_Joint<-array(NA,dim=c(n_test,k1*k2,ncol(Joint_S_beta)))
+  
+  for(i in 1:ncol(Joint_S_beta)){
+    
+    test_X1_Beta<-matrix(test_x1_tilda%*%c(Joint_S_beta[,i][1:((k1-1)*p1)]),ncol=(k1-1))
+    test_X2_Beta<-matrix(test_x2_tilda%*%c(Joint_S_beta[,i][(((k1-1)*p1)+1):nrow(Joint_S_beta)]),ncol=(k2-1))
+    
+    estimated_PP_Joint[,,i]<-apply(matrix(1:(k1*k2),ncol=1),1,new_probability_mnp_2response,k1,k2,mu1=test_X1_Beta,mu2=test_X2_Beta,sigma=Joint_S_sigma[,,i],r=250,Halton_choice=FALSE)
+  }
+  
+  estimated_PP_Joint_list[[cv]]<-estimated_PP_Joint
+  
+  cat("Completed CV:",cv,"\n")
+}
+
+
+
+
+
+
+##########################
+##Calculate the ROC for Conditional S and Joint S
+
+True_class<-abind(test_Y_list,along=1)
+
+f<-function(a){
+  (a[1]-1)*k2+a[2]
+}
+
+True_class1<-apply(True_class,1,f)
+
+
+## Conditional S
+Full_estimated_PP_Conditional<-abind(estimated_PP_Conditional_list,along=1)
+dimnames(Full_estimated_PP_Conditional)[[2]]<-as.character(1:(k1*k2))
+
+auc_vec_Conditional_S<-sapply(1:dim(Full_estimated_PP_Conditional)[3],function(k){
+  roc_obj<-multiclass.roc(True_class1,Full_estimated_PP_Conditional[,,k])
+  as.numeric(roc_obj$auc)
+})
+
+print(mean(auc_vec_Conditional_S))
+
+
+## Joint S
+Full_estimated_PP_Joint<-abind(estimated_PP_Joint_list,along=1)
+dimnames(Full_estimated_PP_Joint)[[2]]<-as.character(1:(k1*k2))
+
+auc_vec_Joint_S<-sapply(1:dim(Full_estimated_PP_Joint)[3],function(k){
+  roc_obj<-multiclass.roc(True_class1,Full_estimated_PP_Joint[,,k])
+  as.numeric(roc_obj$auc)
+})
+
+print(mean(auc_vec_Joint_S))
+
+
+## Comparison
+AUC_results<-data.frame(
+  Method=c("Conditional S","Joint S"),
+  Mean_AUC=c(mean(auc_vec_Conditional_S),mean(auc_vec_Joint_S))
+)
+
+print(AUC_results)
+
+
+
+
+
+
+
+
+################################
+# To generate Figure 5
+###############################
+
+estimated_PP_joint <- estimated_PP_Joint_list
+estimated_PP_conditional <- estimated_PP_Conditional_list
+
+
+# Create true joint class
+True_class_pair <- abind(test_Y_list, along = 1)
+
+f <- function(a) {
+  (a[1] - 1) * k2 + a[2]
+}
+
+True_class <- apply(True_class_pair, 1, f)
+
+n_class <- k1 * k2
+
+
+# Combine posterior predicted probabilities across CV
+PP_joint <- abind(estimated_PP_joint, along = 1)
+PP_conditional <- abind(estimated_PP_conditional, along = 1)
+
+# Posterior mean predicted probabilities
+PP_joint_mean <- apply(PP_joint, c(1, 2), mean)
+PP_conditional_mean <- apply(PP_conditional, c(1, 2), mean)
+
+# Sanity checks
+stopifnot(nrow(PP_joint_mean) == length(True_class))
+stopifnot(nrow(PP_conditional_mean) == length(True_class))
+stopifnot(ncol(PP_joint_mean) == n_class)
+stopifnot(ncol(PP_conditional_mean) == n_class)
+
+
+# One-vs-rest ROC objects and AUC
+roc_joint <- vector("list", n_class)
+roc_conditional <- vector("list", n_class)
+
+auc_joint <- numeric(n_class)
+auc_conditional <- numeric(n_class)
+
+for (j in 1:n_class) {
+  
+  y_binary <- as.numeric(True_class == j)
+  
+  roc_joint[[j]] <- roc(
+    y_binary,
+    PP_joint_mean[, j],
+    quiet = TRUE,
+    direction = "<"
+  )
+  
+  roc_conditional[[j]] <- roc(
+    y_binary,
+    PP_conditional_mean[, j],
+    quiet = TRUE,
+    direction = "<"
+  )
+  
+  auc_joint[j] <- as.numeric(auc(roc_joint[[j]]))
+  auc_conditional[j] <- as.numeric(auc(roc_conditional[[j]]))
+}
+
+
+joint_labels <- expand.grid(
+  Y2 = 0:(k2 - 1),
+  Y1 = 0:(k1 - 1)
+)
+
+panel_titles <- paste0(
+  "Category (",
+  joint_labels$Y1, ",",
+  joint_labels$Y2, ")"
+)
+
+
+png(
+  filename = file.path(path, "Figure_5.png"),
+  width = 14,
+  height = 11,
+  units = "in",
+  res = 600
+)
+
+par(
+  mfrow = c(k1, k2),
+  mar = c(2.3, 2.3, 2.2, 0.8),
+  oma = c(4, 4, 2, 1)
+)
+
+for (j in 1:n_class) {
+  
+  joint_fpr <- 1 - roc_joint[[j]]$specificities
+  joint_tpr <- roc_joint[[j]]$sensitivities
+  
+  conditional_fpr <- 1 - roc_conditional[[j]]$specificities
+  conditional_tpr <- roc_conditional[[j]]$sensitivities
+  
+  plot(
+    joint_fpr,
+    joint_tpr,
+    type = "l",
+    xlim = c(0, 1),
+    ylim = c(0, 1),
+    xaxs = "i",
+    yaxs = "i",
+    col = "#1b9e77",
+    lwd = 2,
+    lty = 1,
+    xlab = "",
+    ylab = "",
+    main = panel_titles[j],
+    cex.axis = 0.85,
+    cex.main = 0.9
+  )
+  
+  lines(
+    conditional_fpr,
+    conditional_tpr,
+    col = "purple",
+    lwd = 2,
+    lty = 2
+  )
+  
+  abline(
+    a = 0,
+    b = 1,
+    lty = 3,
+    col = "gray60"
+  )
+  
+  legend(
+    "bottomright",
+    legend = c(
+      paste0("Joint S (AUC = ", sprintf("%.4f", auc_joint[j]), ")"),
+      paste0("Conditional S (AUC = ", sprintf("%.4f", auc_conditional[j]), ")")
+    ),
+    col = c("#1b9e77", "purple"),
+    lwd = 2,
+    lty = c(1, 2),
+    bty = "n",
+    cex = 0.9,
+    seg.len = 2
+  )
+}
+
+dev.off()
+
+```
+
+
+## Calculate Probability Distance Measures and Reproduce Figure 6
+
+Run the code below to generate Figure 6, which compares the predictive accuracy of the joint \(S\) and conditional \(S\) methods using total variation distance (TVD), Kullback–Leibler (KL) divergence, and Jensen–Shannon divergence (JSD). These measures are computed by comparing the estimated posterior predictive probabilities with the corresponding true probabilities across the repeated test samples.
+
+
+```{r}
+
+#################################
+# To Generate Figure 6
+#################################
+
+# Method 1: Joint S
+estimated_PP_list <- estimated_PP_Joint_list
+
+cat("\nCalculating distances for Joint S...\n")
+
+dist_joint <- calculate_distances(
+  estimated_PP_list,
+  true_PP_list
+)
+
+points     <- dist_joint$TVD
+points_KL  <- dist_joint$KL
+points_JSD <- dist_joint$JSD
+
+
+# Method 2: Conditional S
+
+estimated_PP_list <- estimated_PP_Conditional_list
+
+cat("\nCalculating distances for Conditional S...\n")
+
+dist_Conditional <- calculate_distances(
+  estimated_PP_list,
+  true_PP_list
+)
+
+points1     <- dist_Conditional$TVD
+points1_KL  <- dist_Conditional$KL
+points1_JSD <- dist_Conditional$JSD
+
+
+# ==========================================================
+# Plot: TVD, KL Divergence, and JSD
+# ==========================================================
+
+png(
+  filename = file.path(path, "Figure_6.png"),
+  width = 1800,
+  height = 650,
+  res = 150
+)
+
+par(
+  mfrow = c(1, 3),
+  mar = c(4, 4, 3, 1),
+  oma = c(4, 0, 0, 0)
+)
+
+
+plot_comparison <- function(x1, x2, main_title) {
+  
+  yr <- range(c(x1, x2), na.rm = TRUE)
+  
+  # Add vertical padding
+  padding <- diff(yr) * 0.05
+  
+  if (padding == 0) {
+    padding <- max(abs(yr[1]) * 0.05, 0.001)
+  }
+  
+  yr <- c(
+    yr[1] - padding,
+    yr[2] + padding
+  )
+  
+  plot(
+    seq_along(x1),
+    x1,
+    type = "b",
+    ylim = yr,
+    col = "#1b9e77",
+    lwd = 2.4,
+    pch = 17,
+    cex = 1,
+    cex.axis = 1.2,
+    xlab = "",
+    ylab = "",
+    main = main_title,
+    cex.main = 1.2
+  )
+  
+  points(
+    seq_along(x2),
+    x2,
+    type = "b",
+    col = "purple",
+    lwd = 2.3,
+    pch = 16,
+    cex = 1
+  )
+}
+
+
+# Panel 1: Total Variation Distance
+plot_comparison(points,points1,"")
+
+# Panel 2: KL Divergence
+plot_comparison(points_KL,points1_KL,"")
+
+# Panel 3: Jensen-Shannon Divergence
+plot_comparison(points_JSD,points1_JSD,"")
+
+
+par(
+  fig = c(0, 1, 0, 1),
+  oma = c(0, 0, 0, 0),
+  mar = c(0, 0, 0, 0),
+  new = TRUE
+)
+
+plot.new()
+
+legend(
+  "bottom",
+  legend = c("Joint S", "Conditional S"),
+  col = c("#1b9e77", "purple"),
+  lwd = 2.2,
+  pch = c(17, 16),
+  horiz = TRUE,
+  bty = "n",
+  cex = 1.2,
+  inset = c(0, 0.01)
+)
+
+dev.off()
+
+
+# Summary Table: Mean distances
+summary_table <- data.frame(
+  Method = c("Joint S", "Conditional S"),
+  
+  TVD = c(mean(points),mean(points1)),
+  
+  KL = c(mean(points_KL),mean(points1_KL)),
+  
+  JSD = c(mean(points_JSD),mean(points1_JSD))
+)
+
+print(summary_table, digits = 4)
+
+
+```
+

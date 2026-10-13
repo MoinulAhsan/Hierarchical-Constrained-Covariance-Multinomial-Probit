@@ -1,0 +1,776 @@
+---
+title: "Real_data_Bivariate"
+output: html_document
+date: "2026-10-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load all the required packages and functions
+
+please set the path accordingly
+```{r}
+if(!require(pacman)) install.packages("pacman"); pacman::p_load(mvtnorm, abind, purrr, fastDummies, pROC, car, LaplacesDemon, HDInterval, bayesm, MASS,
+                                                                patchwork,ggplot2,tidyr,dplyr,purrr,ggh4x,coda,gt,kableExtra,knitr,loo)
+
+
+path <- " "  #please set the path accordingly
+setwd(path)
+
+source(file.path(path, "Additional_functions.R"))
+
+source(file.path(path, "Bivariate_joint_S.R"))
+
+source(file.path(path, "Bivariate_conditional_S.R"))
+
+source(file.path(path, "Covariate_processing.R"))
+```
+
+
+
+## Multivariate Real Data Analysis: Data Preparation
+
+Run the code below to prepare the dataset for the multivariate multinomial probit model. First, load the response-specific predictor matrices (X_ML.RData and X_AD.RData) obtained from the preceding univariate real data analysis. 
+```{r}
+
+data <- read.csv(file.path(path, "Real_data.csv"),check.names = FALSE)
+
+response <- data[, c("Mental_illness", "Alcohol_&_drug_abuse")]
+
+X <- data[, !names(data) %in% c("Mental_illness", "Alcohol_&_drug_abuse")]
+
+X<-covariate_processing(X)
+
+# Add intercept
+X <- cbind(Intercept = 1, X)
+
+# Response-specific covariate sets
+# ---- Covariates for response Mental illness ----
+load("X_ML.RData") # you need to get this from the real_data_univariate file
+x <-X_ML
+
+# ---- Covariates for response Alcohol and drug abuse ----
+load("X_AD.RData") # you need to get this from the real_data_univariate file
+xx <-X_AD
+
+
+
+y12 <- response
+
+# Recode ordinal outcomes: 1/2 → 1, 3 → 2, 4 → 3, else → 4
+y12 <- apply(y12, 2, function(x) {
+  ifelse(x %in% c(1, 2), 1,
+         ifelse(x == 3, 2,
+                ifelse(x == 4, 3, 4)))
+})
+
+category_name <- c(1, 2, 3, 4)
+
+
+y1  <- y12[, 1]
+y2  <- y12[, 2]
+y <- c(y1, y2)
+
+
+# Build datasets and remove missing rows
+data1 <- data.frame(y1, x)
+data2 <- data.frame(y2, xx)
+
+# Combine and drop NA rows
+data <- na.omit(data.frame(data1, data2)) # remove the missing values
+
+# Split back into two matrices
+end_col <- which(colnames(data) == "y2")
+
+data1 <- as.matrix(data[, 1:(end_col - 1)])
+data2 <- as.matrix(data[, end_col:ncol(data)])
+
+
+# Final response and predictor matrices
+y1 <- data1[, 1]
+X1 <- data1[, -1]
+
+y2 <- data2[, 1]
+X2 <- data2[, -1]
+
+
+y12 <- cbind(y1, y2)
+
+
+
+# Compute number of categories for each response
+k1 <- length(sort(unique(y12[, 1]), decreasing = TRUE))
+k2 <- length(sort(unique(y12[, 2]), decreasing = TRUE))
+
+
+
+big_x1<-diag((k1-1)) %x% X1 
+big_x2<-diag((k2-1)) %x% X2 
+
+x_tilda<-rbind(cbind(big_x1,matrix(0,ncol=ncol(big_x2),nrow=nrow(big_x1))),cbind(matrix(0,ncol=ncol(big_x1),nrow=nrow(big_x2)),big_x2))
+
+
+
+```
+
+
+
+
+## Reproduce Table 8: Posterior Estimates of Cross-Response Correlations
+Run the code below to fit the multivariate multinomial probit model using the joint \(S\) method and reproduce Table 8. The code obtains posterior samples of the regression coefficients and covariance parameters, then calculates the posterior medians and 95% highest posterior density (HPD) interval widths for the cross-response correlation parameters between mental illness and alcohol and drug abuse.
+
+```{r}
+
+#################################
+# Code to generate Table 8
+#################################
+
+nit=50000
+nmc=50000
+nthin=10
+tau2<-0.025^2
+lamda2=10
+proposal_step=.1
+
+set.seed(12345)
+MCMC_Joint_S_bivariate_real<- run_multinomial_bivariate_Joint_S_mcmc(X1,X2,y1, y2,
+                                                      nit=nit, nmc=nmc, nthin=nthin,
+                                                      tau2=tau2,lamda2=lamda2,
+                                                      proposal_step=proposal_step)
+
+save(MCMC_Joint_S_bivariate_real,file = file.path(path, "MCMC_Joint_S_bivariate_real.RData"))
+
+
+Joint_S_beta<-MCMC_Joint_S_bivariate_real$beta_final_vector
+Joint_S_sigma<-MCMC_Joint_S_bivariate_real$sigma2_final
+Joint_S_S<-MCMC_Joint_S_bivariate_real$S_final
+Joint_S_R<-MCMC_Joint_S_bivariate_real$R_final
+
+
+
+
+
+
+###  Compute posterior medians & HPDIs for the full R matrix
+R_median <- apply(Joint_S_R, c(2,3), median)
+
+R_hdi <- apply(Joint_S_R, c(2,3), function(x) hdi(x, ci = 0.95))
+R_low  <- R_hdi[1, , ]
+R_high <- R_hdi[2, , ]
+
+
+R12_med  <- R_median[1:3, 1:3]
+R12_low  <- R_low[1:3, 1:3]
+R12_high <- R_high[1:3, 1:3]
+
+
+
+###  Create formatted cells "median (width)"
+fmt <- function(m, lo, hi){
+  width <- round(hi - lo, 2)
+  paste0(round(m, 2), " (", width, ")")
+}
+
+Table_cells <- matrix("", nrow = 3, ncol = 3)
+
+for(i in 1:3){
+  for(j in 1:3){
+    Table_cells[i,j] <- fmt(R12_med[i,j], R12_low[i,j], R12_high[i,j])
+  }
+}
+
+
+
+Final_df <- data.frame(
+  Alcohol_Category = c("Category 1","Category 2","Category 3"),
+  Category1 = Table_cells[,1],
+  Category2 = Table_cells[,2],
+  Category3 = Table_cells[,3]
+)
+
+kable(
+  Final_df,
+  align = "lccc",
+  col.names = c("Alcohol & Drug Abuse ", "Category 1", "Category 2", "Category 3"),
+  caption = "Posterior median and 95% HPD interval width for cross-correlation entries in R12 matrix"
+) %>%
+  add_header_above(c(" " = 1, "Mental Illness" = 3)) %>%
+  kable_classic(full_width = FALSE)
+
+
+```
+
+
+
+
+
+
+## Reproduce Table 9: Model Comparison Using Different Covariance Structures
+Run the code below to reproduce Table 9 by evaluating the multivariate multinomial probit model under different covariance structures. The code calculates the 95% highest posterior density (HPD) interval of the log-likelihood, Bayesian Predictive Information Criterion (BPIC), and Widely Applicable Information Criterion (WAIC) for the full covariance matrix. To obtain the corresponding results for the zero cross-covariance matrix, activate line 346 in Bivariate_joint_S.R; for the diagonal covariance matrix, activate lines 351–352. Rerun the joint \(S\) MCMC analysis and repeat the calculations.
+
+```{r}
+
+#################################
+# Code to generate Table 9
+#################################
+
+
+category_position_y12 = as.list(rep(NA,k1*k2))
+dim(category_position_y12) = c(k1,k2)
+for (i in 1:k1)
+{
+  for (j in 1:k2)
+  {
+    category_position_y12[[i,j]] = which(apply(y12, 1, function(a) { max(abs(a - c(i,j)))} )== 0) ## which observations have 1st y category = i AND 2nd y category = j
+  }
+}
+
+###Full matrix : HPDI of log-likelihood, BPIC ###
+set.seed(12345)
+loglikelihood_Joint_S <- sapply(seq_len(ncol(Joint_S_beta)), function(i) {
+  X_BETA_tilda<-colSums( t(x_tilda)*  Joint_S_beta[, i] )        
+  X_BETA<-matrix( X_BETA_tilda, ncol= (k1-1)+(k2-1) ) 
+  unlist(log_likelihood_mnp_2response(category_position_y12,k1,k2,mu1=X_BETA[,1:(k1-1)],mu2=X_BETA[,((k1):ncol(X_BETA))],Joint_S_sigma[,, i],r=250,Halton_choice=FALSE)[2])
+})
+
+
+
+beta_bar<-( apply(Joint_S_beta,1,mean) )
+sigma_bar<-apply(Joint_S_sigma, c(1,2), mean)
+X_BETA_tilda<-colSums(t(x_tilda)* c(beta_bar))   
+X_BETA_bar<-matrix( X_BETA_tilda,  ncol= (k1-1)+(k2-1) )
+
+
+set.seed(12345)
+D_theta_bar<- -2*unlist(log_likelihood_mnp_2response(category_position_y12,k1,k2,mu1=X_BETA_bar[,1:(k1-1)],mu2=X_BETA_bar[,((k1):ncol(X_BETA_bar))],sigma_bar,r=250,Halton_choice=FALSE)[2])
+D_bar<- -2*mean(loglikelihood_Joint_S)
+p_D <- D_bar - D_theta_bar
+BPIC <- D_bar + 2 * p_D
+
+
+
+
+# WAIC
+set.seed(12345)
+
+n_draws <- ncol(Joint_S_beta)
+n_obs   <- nrow(X1)
+
+loglikelihood_Joint_S_WAIC <- t(
+  vapply(
+    seq_len(n_draws),
+    FUN.VALUE = numeric(n_obs),
+    FUN = function(i) {
+      
+      X_BETA_tilda <- colSums(
+        t(x_tilda) * Joint_S_beta[, i]
+      )
+      
+      X_BETA <- matrix(
+        X_BETA_tilda,
+        nrow = n_obs,
+        ncol = (k1 - 1) + (k2 - 1)
+      )
+      
+      log_likelihood_mnp_2response_WAIC(
+        pos_y = category_position_y12,
+        k1 = k1,
+        k2 = k2,
+        mu1 = X_BETA[, seq_len(k1 - 1), drop = FALSE],
+        mu2 = X_BETA[
+          ,
+          k1:(k1 + k2 - 2),
+          drop = FALSE
+        ],
+        sigma = Joint_S_sigma[, , i],
+        r = 250,
+        Halton_choice = FALSE
+      )$observation_log_likelihood
+    }
+  )
+)
+
+
+
+print(hdi(loglikelihood_Joint_S))
+print(BPIC)
+
+loo::waic(loglikelihood_Joint_S_WAIC)
+
+
+# To calculate HPDI log-likelihood and BPIC for (zero matrix) activate line 346 in Bivariate_joint_S file and rerun line 109 and repeat the process same as full matrix
+
+# To calculate HPDI log-likelihood and BPIC for (diagonal matrix ) activate line 351-352 in Bivariate_joint_S file and rerun line 109 and repeat the process same as full matrix
+
+```
+
+
+
+
+
+## Reproduce Table 7: Cross-Validation Results for the Multivariate Model
+
+Run the code below to reproduce Table 7, which compares the observed category proportions with their corresponding 95% highest posterior density (HPD) predictive intervals for mental illness and alcohol and drug abuse under the multivariate multinomial probit model. The analysis considers covariate combinations with at least 30 observations and calculates the marginal predictive probabilities for each response from the joint posterior predictive probabilities. The results are presented separately for both responses.
+```{r}
+############################################################
+# TABLE 7: Cross-validation for the bivariate MNP model
+# Joint S covariance update
+############################################################
+
+# MCMC settings
+nit <- 50000
+nmc <- 50000
+nthin <- 10
+tau2 <- 0.025^2
+lamda2 <- 10
+proposal_step <- 0.1
+
+# Model dimensions
+p1 <- ncol(X1)
+p2 <- ncol(X2)
+
+k1 <- length(unique(y1))
+k2 <- length(unique(y2))
+
+# Complete dataset from the preceding preparation step
+full_data <- data.frame(
+  y1 = y1,
+  X1,
+  y2 = y2,
+  X2,
+  check.names = FALSE
+)
+
+x1_full <- as.matrix(X1)
+x2_full <- as.matrix(X2)
+
+############################################################
+# 1. Identify eligible covariate combinations
+############################################################
+
+unq_row_of_X_y1 <- unique(x1_full)
+unq_row_of_X_y2 <- unique(x2_full)
+
+target_count <- 30
+
+# Count observations for each unique combination
+count_combinations <- function(X, patterns) {
+  vapply(seq_len(nrow(patterns)), function(i) {
+    sum(
+      rowSums(
+        sweep(X, 2, patterns[i, ], FUN = "-") == 0
+      ) == ncol(X)
+    )
+  }, numeric(1))
+}
+
+count_y1 <- count_combinations(
+  x1_full, unq_row_of_X_y1
+)
+
+count_y2 <- count_combinations(
+  x2_full, unq_row_of_X_y2
+)
+
+# Retain combinations with at least 30 observations
+unq_row_of_X_y1 <- unq_row_of_X_y1[
+  count_y1 >= target_count, , drop = FALSE
+]
+
+unq_row_of_X_y2 <- unq_row_of_X_y2[
+  count_y2 >= target_count, , drop = FALSE
+]
+
+############################################################
+# 2. Construct cross-validation jobs
+############################################################
+
+cv_jobs <- c(
+  lapply(seq_len(nrow(unq_row_of_X_y1)), function(i) {
+    list(
+      response = 1L,
+      target_row = unq_row_of_X_y1[i, ]
+    )
+  }),
+  lapply(seq_len(nrow(unq_row_of_X_y2)), function(i) {
+    list(
+      response = 2L,
+      target_row = unq_row_of_X_y2[i, ]
+    )
+  })
+)
+
+############################################################
+# 3. Cross-validation using the existing MCMC function
+############################################################
+
+estimated_PP_list <- vector("list", length(cv_jobs))
+test_Y_list <- vector("list", length(cv_jobs))
+
+cv_response_list <- integer(length(cv_jobs))
+cv_target_row_list <- vector("list", length(cv_jobs))
+
+for (cv in seq_along(cv_jobs)) {
+
+  job <- cv_jobs[[cv]]
+  target_row <- job$target_row
+
+  ##########################################################
+  # Determine held-out observations
+  ##########################################################
+
+  if (job$response == 1L) {
+
+    index <- which(
+      rowSums(
+        sweep(x1_full, 2, target_row, "-") == 0
+      ) == p1
+    )
+
+  } else {
+
+    index <- which(
+      rowSums(
+        sweep(x2_full, 2, target_row, "-") == 0
+      ) == p2
+    )
+  }
+
+  ##########################################################
+  # Split the complete bivariate dataset
+  ##########################################################
+
+  train_data <- full_data[-index, , drop = FALSE]
+  test_data  <- full_data[index, , drop = FALSE]
+
+  n_test <- nrow(test_data)
+
+  # Training predictors and responses
+  x1_train <- as.matrix(
+    train_data[, 2:(p1 + 1), drop = FALSE]
+  )
+
+  x2_train <- as.matrix(
+    train_data[, (p1 + 3):ncol(train_data),
+               drop = FALSE]
+  )
+
+  y1_train <- as.numeric(train_data$y1)
+  y2_train <- as.numeric(train_data$y2)
+
+  # Test predictors and responses
+  x1_test <- as.matrix(
+    test_data[, 2:(p1 + 1), drop = FALSE]
+  )
+
+  x2_test <- as.matrix(
+    test_data[, (p1 + 3):ncol(test_data),
+              drop = FALSE]
+  )
+
+  y1_test <- as.numeric(test_data$y1)
+  y2_test <- as.numeric(test_data$y2)
+
+  ##########################################################
+  # Fit the bivariate multinomial probit model
+  ##########################################################
+
+  set.seed(12345 + cv)
+
+  MCMC_Joint_S <- run_multinomial_bivariate_Joint_S_mcmc(
+    X1 = x1_train,
+    X2 = x2_train,
+    y1 = y1_train,
+    y2 = y2_train,
+    nit = nit,
+    nmc = nmc,
+    nthin = nthin,
+    tau2 = tau2,
+    lamda2 = lamda2,
+    proposal_step = proposal_step
+  )
+
+  ##########################################################
+  # Extract posterior samples
+  ##########################################################
+
+  Joint_S_beta <- MCMC_Joint_S$beta_final_vector
+  Joint_S_sigma <- MCMC_Joint_S$sigma2_final
+
+  nsamples <- ncol(Joint_S_beta)
+
+  ##########################################################
+  # Calculate joint posterior predictive probabilities
+  ##########################################################
+
+  estimated_PP <- array(
+    NA_real_,
+    dim = c(n_test, k1 * k2, nsamples)
+  )
+
+  for (iter in seq_len(nsamples)) {
+
+    beta_draw <- Joint_S_beta[, iter]
+
+    # Regression coefficients for response 1
+    beta1 <- matrix(
+      beta_draw[1:((k1 - 1) * p1)],
+      ncol = p1,
+      byrow = TRUE
+    )
+
+    # Regression coefficients for response 2
+    beta2 <- matrix(
+      beta_draw[
+        (((k1 - 1) * p1) + 1):length(beta_draw)
+      ],
+      ncol = p2,
+      byrow = TRUE
+    )
+
+    # Test-set linear predictors
+    test_X1_Beta <- x1_test %*% t(beta1)
+    test_X2_Beta <- x2_test %*% t(beta2)
+
+    # Joint category probabilities
+    estimated_PP[, , iter] <- apply(
+      matrix(1:(k1 * k2), ncol = 1),
+      1,
+      new_probability_mnp_2response,
+      k1,
+      k2,
+      mu1 = test_X1_Beta,
+      mu2 = test_X2_Beta,
+      sigma = Joint_S_sigma[, , iter],
+      r = 250,
+      Halton_choice = FALSE
+    )
+  }
+
+  ##########################################################
+  # Store prediction results
+  ##########################################################
+
+  estimated_PP_list[[cv]] <- estimated_PP
+
+  test_Y_list[[cv]] <- cbind(
+    y1_test,
+    y2_test
+  )
+
+  cv_response_list[cv] <- job$response
+  cv_target_row_list[[cv]] <- target_row
+
+  cat(
+    "Completed CV:", cv,
+    "of", length(cv_jobs), "\n"
+  )
+}
+
+############################################################
+# 4. Save cross-validation results
+############################################################
+
+save(
+  estimated_PP_list,
+  test_Y_list,
+  cv_response_list,
+  cv_target_row_list,
+  unq_row_of_X_y1,
+  unq_row_of_X_y2,
+  file = file.path(
+    path,
+    "Table_7.RData"
+  )
+)
+
+############################################################
+#  Calculate observed proportions and 95% HPD intervals
+############################################################
+
+get_table_row <- function(cv) {
+
+  pp <- estimated_PP_list[[cv]]
+  yy <- as.matrix(test_Y_list[[cv]])
+
+  resp <- cv_response_list[cv]
+
+  ns <- dim(pp)[3]
+  n_test <- dim(pp)[1]
+
+  if (resp == 1L) {
+
+    # Mental illness
+    true <- sapply(
+      seq_len(k1),
+      function(a) mean(yy[, 1] == a)
+    )
+
+    draws <- matrix(NA_real_, ns, k1)
+
+    for (a in seq_len(k1)) {
+
+      cols <- ((a - 1) * k2 + 1):(a * k2)
+
+      z <- apply(
+        pp[, cols, , drop = FALSE],
+        c(1, 3),
+        sum
+      )
+
+      z <- matrix(z, nrow = n_test, ncol = ns)
+      draws[, a] <- colMeans(z)
+    }
+
+  } else {
+
+    # Alcohol and drug abuse
+    true <- sapply(
+      seq_len(k2),
+      function(b) mean(yy[, 2] == b)
+    )
+
+    draws <- matrix(NA_real_, ns, k2)
+
+    for (b in seq_len(k2)) {
+
+      cols <- seq(b, k1 * k2, by = k2)
+
+      z <- apply(
+        pp[, cols, , drop = FALSE],
+        c(1, 3),
+        sum
+      )
+
+      z <- matrix(z, nrow = n_test, ncol = ns)
+      draws[, b] <- colMeans(z)
+    }
+  }
+
+  # 95% HPD predictive intervals
+  hp <- t(
+    apply(
+      draws,
+      2,
+      function(z) HDInterval::hdi(
+        z,
+        credMass = 0.95
+      )
+    )
+  )
+
+  list(
+    true = true,
+    median = apply(draws, 2, median),
+    lower = hp[, 1],
+    upper = hp[, 2],
+    covered = true >= hp[, 1] & true <= hp[, 2]
+  )
+}
+
+tabres <- lapply(
+  seq_along(cv_jobs),
+  get_table_row
+)
+
+
+build_table <- function(ids, patterns) {
+
+  if (length(ids) == 0) {
+    return(NULL)
+  }
+
+  K <- length(tabres[[ids[1]]]$true)
+
+  tr <- lo <- up <- med <- matrix(
+    NA_real_,
+    length(ids),
+    K
+  )
+
+  cov <- matrix(FALSE, length(ids), K)
+  disp <- matrix("", length(ids), K)
+
+  for (i in seq_along(ids)) {
+
+    z <- tabres[[ids[i]]]
+
+    tr[i, ] <- z$true
+    lo[i, ] <- z$lower
+    up[i, ] <- z$upper
+    med[i, ] <- z$median
+    cov[i, ] <- z$covered
+
+    for (j in seq_len(K)) {
+
+      disp[i, j] <- sprintf(
+        "%.3f (%.3f, %.3f)",
+        tr[i, j],
+        lo[i, j],
+        up[i, j]
+      )
+    }
+  }
+
+  colnames(disp) <- paste0(
+    "Category ",
+    0:(K - 1)
+  )
+
+  list(
+    covariate_combinations = patterns,
+    table = disp,
+    true = tr,
+    posterior_median = med,
+    HPD_lower = lo,
+    HPD_upper = up,
+    covered = cov
+  )
+}
+
+id1 <- which(cv_response_list == 1L)
+id2 <- which(cv_response_list == 2L)
+
+Mental_Illness_Bivariate <- build_table(
+  id1,
+  unq_row_of_X_y1
+)
+
+Alcohol_Drug_Abuse_Bivariate <- build_table(
+  id2,
+  unq_row_of_X_y2
+)
+
+# Display Table 7
+cat("\nMENTAL ILLNESS -- BIVARIATE MODEL\n")
+
+if (!is.null(Mental_Illness_Bivariate)) {
+
+  print(
+    Mental_Illness_Bivariate$covariate_combinations
+  )
+
+  knitr::kable(
+    Mental_Illness_Bivariate$table,
+    caption = "Mental illness: observed proportions and 95% HPD predictive intervals"
+  )
+}
+
+cat("\nALCOHOL & DRUG ABUSE -- BIVARIATE MODEL\n")
+
+if (!is.null(Alcohol_Drug_Abuse_Bivariate)) {
+
+  print(
+    Alcohol_Drug_Abuse_Bivariate$covariate_combinations
+  )
+
+  knitr::kable(
+    Alcohol_Drug_Abuse_Bivariate$table,
+    caption = "Alcohol and drug abuse: observed proportions and 95% HPD predictive intervals"
+  )
+}
+```
+

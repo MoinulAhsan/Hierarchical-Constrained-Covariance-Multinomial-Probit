@@ -1,0 +1,742 @@
+---
+title: "Real_data_Univariate"
+output: html_document
+date: "2026-10-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load all the required packages and functions
+
+please set the path accordingly
+```{r}
+if(!require(pacman)) install.packages("pacman"); pacman::p_load(mvtnorm, abind, purrr, fastDummies, pROC, car, LaplacesDemon, HDInterval, bayesm, MASS,
+                                                                patchwork,ggplot2,tidyr,dplyr,purrr,ggh4x,coda,gt,kableExtra,knitr,philentropy,MNP)
+
+
+path <- " "  #please set the path accordingly
+setwd(path)
+
+source(file.path(path, "Additional_functions.R"))
+
+source(file.path(path, "univariate_MCMC.R"))
+
+source(file.path(path, "Covariate_processing.R"))
+
+source(file.path(path, "SSVS_for_Joint_S.R"))
+
+source(file.path(path, "Ordinal_probit_model.R"))
+
+```
+
+
+
+
+## Real Data Analysis: Data Preparation and Variable Selection
+
+Run the code below to prepare the real-world dataset and perform variable selection using stochastic search variable selection (SSVS). Set response_ID = 1 for mental illness or response_ID = 2 for alcohol and drug abuse. The code processes the covariates, selects relevant predictors using the joint \(S\) method, and saves the resulting predictor matrix for subsequent model fitting and analysis.
+
+
+```{r}
+
+response_name<-c("ML","AD")
+
+####################
+#User input
+####################
+#Set response_ID accordingly for corresponding response
+# response_ID :1 = mental illness , response_ID :2 = alcohol & drug abuse
+response_ID<- 
+  ####################
+
+
+data <- read.csv(file.path(path, "Real_data.csv"),check.names = FALSE)
+
+response <- data[, c("Mental_illness", "Alcohol_&_drug_abuse")]
+
+X <- data[, !names(data) %in% c("Mental_illness", "Alcohol_&_drug_abuse")]
+
+X<-covariate_processing(X)
+
+# Add intercept
+X <- cbind(Intercept = 1, X)
+
+
+
+y <- as.numeric(response[, response_ID]) #
+
+# Recode response categories: (1,2)->1 ; 3->2 ; 4->3 ; else->4
+y <- ifelse(y %in% c(1, 2), 1,
+            ifelse(y == 3, 2,
+                   ifelse(y == 4, 3, 4)))
+
+category_name <- 1:4
+k <- length(unique(na.omit(y)))
+
+category_position <- lapply(
+  1:k, function(j) which(y == j)
+)
+
+
+nit=50000
+nmc=50000
+nthin=10
+tau2=.04^2
+lamda2=10
+proposal_step=.1
+
+#selecting variables uses SSVS
+set.seed(12345)
+assign(paste("run_SSVS_Joint_S_",response_name[response_ID],sep=""), run_SSVS_Joint_S(X, y, nit, nmc, nthin,tau2,lamda2,proposal_step)  ) 
+
+## ---------------------------
+## Choose specific predictors selected from SSVS
+## ---------------------------
+varlist <- get(paste("run_SSVS_Joint_S_", response_name[response_ID], sep = ""))
+X <- X[, varlist, drop = FALSE]
+assign(paste("X_", response_name[response_ID], sep=""),X) #X_ML, X_AD
+
+save(list = paste("X_", response_name[response_ID], sep = ""),
+     file = file.path(path, paste("X_", response_name[response_ID], ".RData", sep = "")))
+
+## ---------------------------
+## Combine, clean, and finalize dataset
+## ---------------------------
+
+data <- data.frame(y, X)
+data <- na.omit(data)
+
+y <- data$y
+X <- data[, -1]
+
+x_tilda<- diag((k-1)) %x% as.matrix(X)
+
+X1<-X
+
+p<-ncol(X)
+
+
+```
+
+
+
+
+## Real Data Analysis: Model Fitting 
+Run the code below to fit the proposed joint \(S\) multinomial probit model separately for mental illness and alcohol and drug abuse. The code obtains posterior samples, standardizes the regression coefficients. Ensure that the corresponding response and selected predictors are loaded before running each analysis.
+
+```{r}
+
+##############################
+# for mental illness 
+set.seed(12345)
+MCMC_Joint_S_ML<-run_multinomial_univariate_mcmc(X, y,
+                                                 nit=nit, nmc=nmc, nthin=nthin,
+                                                 tau2=tau2,lamda2=lamda2,
+                                                 proposal_step=proposal_step,
+                                                 S_update_method = "joint",
+                                                 R_update_method = "grid")
+
+save(MCMC_Joint_S_ML,file = file.path(path, "MCMC_Joint_S_ML.RData"))
+
+
+Joint_S_beta_ML<-MCMC_Joint_S_ML$beta_final_vector
+Joint_S_sigma_ML<-MCMC_Joint_S_ML$sigma2_final
+Joint_S_S_ML<-MCMC_Joint_S_ML$S_final
+Joint_S_R_ML<-MCMC_Joint_S_ML$R_final
+
+
+#Standardized the beta 
+Joint_S_STD_beta_ML<- array(NA, c((k-1)*p, ncol(Joint_S_beta_ML)) )
+
+for( i in 1:ncol(Joint_S_beta_ML)){
+  
+  mat_beta<-matrix(Joint_S_beta_ML[,i],ncol = p,byrow = T)
+  
+  Joint_S_STD_beta_ML[,i] <-  c(t(mat_beta / c(Joint_S_S_ML[,i])))
+  
+}
+
+
+
+
+
+
+### mental illness  ###
+
+set.seed(12345)
+loglikelihood_ML <- sapply(seq_len(ncol(Joint_S_beta_ML)), function(i) {
+  X_BETA_tilda <- colSums(t(x_tilda) * Joint_S_beta_ML[, i])
+  X_BETA <- matrix(X_BETA_tilda, ncol = (k - 1))
+  unlist(log_likelihood_mnp_1response(category_position, mu = X_BETA, Joint_S_sigma_ML[,, i])[2])
+})
+
+
+beta_bar<- apply(Joint_S_beta_ML,1,mean) 
+sigma_bar<-apply(Joint_S_sigma_ML, c(1,2), mean)
+X_BETA_tilda<-colSums(t(x_tilda)* c(beta_bar))   
+X_BETA_bar<-matrix( X_BETA_tilda, ncol= (k-1) )
+
+
+set.seed(12345)
+D_theta_bar<- -2*unlist(log_likelihood_mnp_1response(category_position,mu=X_BETA_bar,sigma_bar)[2])
+D_bar<- -2*mean(loglikelihood_ML)
+p_D <- D_bar - D_theta_bar
+BPIC_ML <- D_bar + 2 * p_D
+
+print(BPIC_ML)
+
+
+
+# for ordinal probit 
+print( get_BPIC_ordinal_probit_model(X,y) )
+
+###############################
+
+
+
+
+###############################
+# For alcohol & drug abuse
+set.seed(12345)
+MCMC_Joint_S_Alcohol<-run_multinomial_univariate_mcmc(X, y,
+                                                      nit=nit, nmc=nmc, nthin=nthin,
+                                                      tau2=tau2,lamda2=lamda2,
+                                                      proposal_step=proposal_step,
+                                                      S_update_method = "joint",
+                                                      R_update_method = "grid")
+
+
+save(MCMC_Joint_S_Alcohol,file = file.path(path, "MCMC_Joint_S_Alcohol.RData"))
+
+
+Joint_S_beta_Alcohol<-MCMC_Joint_S_Alcohol$beta_final_vector
+Joint_S_sigma_Alcohol<-MCMC_Joint_S_Alcohol$sigma2_final
+Joint_S_S_Alcohol<-MCMC_Joint_S_Alcohol$S_final
+Joint_S_R_Alcohol<-MCMC_Joint_S_Alcohol$R_final
+
+
+#Standardized the beta 
+Joint_S_STD_beta_Alcohol<- array(NA, c((k-1)*p, ncol(Joint_S_beta_Alcohol)) )
+
+for( i in 1:ncol(Joint_S_beta_Alcohol)){
+  
+  mat_beta<-matrix(Joint_S_beta_Alcohol[,i],ncol = p,byrow = T)
+  
+  Joint_S_STD_beta_Alcohol[,i] <-  c(t(mat_beta / c(Joint_S_S_Alcohol[,i])))
+  
+}
+
+
+
+
+
+### alcohol & drug abuse ###
+
+set.seed(12345)
+loglikelihood_AL <- sapply(seq_len(ncol(Joint_S_beta_Alcohol)), function(i) {
+  X_BETA_tilda <- colSums(t(x_tilda) * Joint_S_beta_Alcohol[, i])
+  X_BETA <- matrix(X_BETA_tilda, ncol = (k - 1))
+  unlist(log_likelihood_mnp_1response(category_position, mu = X_BETA, Joint_S_sigma_Alcohol[,, i])[2])
+})
+
+
+beta_bar<- apply(Joint_S_beta_Alcohol,1,mean) 
+sigma_bar<-apply(Joint_S_sigma_Alcohol, c(1,2), mean)
+X_BETA_tilda<-colSums(t(x_tilda)* c(beta_bar))   
+X_BETA_bar<-matrix( X_BETA_tilda, ncol= (k-1) )
+
+
+set.seed(12345)
+D_theta_bar<- -2*unlist(log_likelihood_mnp_1response(category_position,mu=X_BETA_bar,sigma_bar)[2])
+D_bar<- -2*mean(loglikelihood_AL)
+p_D <- D_bar - D_theta_bar
+BPIC_AL <- D_bar + 2 * p_D
+
+print(BPIC_AL)
+
+
+
+# for ordinal probit 
+print( get_BPIC_ordinal_probit_model(X,y) )
+
+```
+
+
+
+
+## Reproduce Table 5: Posterior Estimates of Standardized Regression Coefficients
+
+Run the code below to reproduce Table 5, which summarizes the posterior median estimates and 95% highest posterior density (HPD) interval widths of the standardized regression coefficients for mental illness and alcohol and drug abuse. The results are presented separately for each response category, with predictors aligned across both outcomes for comparison.
+
+```{r}
+
+###########################################
+# Code to generate Table 5
+###########################################
+
+Standardized_beta_median<-round(apply(Joint_S_STD_beta_ML,1,quantile,p=c(.5)),3)
+Standardized_HPDI_beta<- round(hdi(t(Joint_S_STD_beta_ML)),3)
+
+ML_med   <- matrix(Standardized_beta_median,      nrow = 3, byrow = TRUE)
+ML_low   <- matrix(Standardized_HPDI_beta[1, ],   nrow = 3, byrow = TRUE)
+ML_high  <- matrix(Standardized_HPDI_beta[2, ],   nrow = 3, byrow = TRUE)
+
+
+
+Standardized_beta_median_Alcohol<-round(apply(Joint_S_STD_beta_Alcohol,1,quantile,p=c(.5)),3)
+Standardized_HPDI_beta_Alcohol<- round(hdi(t(Joint_S_STD_beta_Alcohol)),3)
+
+AL_med   <- matrix(Standardized_beta_median_Alcohol,     nrow = 3, byrow = TRUE)
+AL_low   <- matrix(Standardized_HPDI_beta_Alcohol[1, ],  nrow = 3, byrow = TRUE)
+AL_high  <- matrix(Standardized_HPDI_beta_Alcohol[2, ],  nrow = 3, byrow = TRUE)
+
+
+### -----------------------------
+### Helper function to format cell
+### -----------------------------
+fmt <- function(m, lo, hi){
+  width <- round(hi - lo, 3)
+  paste0(m, " (", width, ")")
+}
+
+### -----------------------------
+### 1. Format ML table
+### -----------------------------
+ML_table <- matrix("", nrow = ncol(X_ML), ncol = 3)
+for(i in 1:3){
+  for(j in 1:ncol(X_ML)){
+    ML_table[j, i] <- fmt(ML_med[i, j], ML_low[i, j], ML_high[i, j])
+  }
+}
+
+predictors_ML <- colnames(X_ML)
+rownames(ML_table) <- predictors_ML
+colnames(ML_table) <- c("Cat1_ML","Cat2_ML","Cat3_ML")
+
+
+### -----------------------------
+### 2. Format Alcohol table
+### -----------------------------
+AL_table <- matrix("", nrow = ncol(X_AD), ncol = 3)
+for(i in 1:3){
+  for(j in 1:ncol(X_AD)){
+    AL_table[j, i] <- fmt(AL_med[i, j], AL_low[i, j], AL_high[i, j])
+  }
+}
+
+predictors_AL <- colnames(X_AD)
+rownames(AL_table) <- predictors_AL
+colnames(AL_table) <- c("Cat1_Alcohol","Cat2_Alcohol","Cat3_Alcohol")
+
+
+### -----------------------------
+### 3. Merge tables (align predictors)
+### -----------------------------
+ML_df <- cbind(Predictor = rownames(ML_table), ML_table)
+AL_df <- cbind(Predictor = rownames(AL_table), AL_table)
+
+Full_tab <- full_join(as.data.frame(ML_df),
+                      as.data.frame(AL_df),
+                      by = "Predictor")
+
+
+print(Full_tab)
+```
+
+
+
+
+## Reproduce Table 6: Cross-Validation Results for Mental Illness and Alcohol and Drug Abuse
+
+Run the code below to reproduce Table 6, which compares the observed category proportions with their corresponding 95% highest posterior density (HPD) predictive intervals. Set response_ID = 1 for mental illness and response_ID = 2 for alcohol and drug abuse, and rerun the corresponding data preparation steps for each outcome. The analysis considers covariate combinations with at least 30 observations and reports the results separately for both responses.
+To obtain the corresponding results for the BN12 method, replace the run_multinomial_univariate_mcmc() function with run_multinomial_univariate_mcmc_BN12() with appropriate arguments
+
+```{r}
+
+#######################################################
+## Code for generating Table 6
+#######################################################
+
+
+# For Mental illness
+
+# set response_ID<-1 and run code lines from 30 to 86 
+#you can skip line 67 if you already have the output
+
+unq_row_of_X<-unique(as.matrix(X) )
+
+# Step 1: Get counts
+check_no_of_each_combination <- sapply(1:nrow(unq_row_of_X), function(i) {
+  sum(rowSums(abs(t(t(X) - unq_row_of_X[i, ]))) == 0)
+})
+
+target_count <- 30   
+
+# Step 3: Get the index (first match) of the row with target count
+target_index <- which(check_no_of_each_combination >= target_count)  # in case of multiple matches
+
+# Step 4: Extract the row
+unq_row_of_X <- unq_row_of_X[target_index, , drop = FALSE]
+
+
+
+test_X_list<-list()
+test_Y_list<-list()
+beta_final_vector_list<-list()
+sigma2_final_list<-list()
+
+for(cv in 1:nrow(unq_row_of_X)){
+  
+  
+  # Get the first row of unq_row_of_X
+  target_row <- unq_row_of_X[cv, ]
+  
+  # Find the matching row(s) in x1
+  index <- which(apply(X1, 1, function(row) all(row == target_row)))
+  
+  test_data<- as.matrix( data[index,] )
+  train_data<- as.matrix( data[-index,])
+  
+  
+  X<- as.matrix( train_data[,-1])
+  y<- as.numeric(train_data[,1])
+  n<-length(y)
+  
+  
+  
+  X_test<- as.matrix( test_data[,-1])
+  y_test<- as.numeric(test_data[,1])
+  
+  test_x_tilda<- diag((k-1)) %x% X_test 
+  n_test<- length(y_test)
+  
+  
+  set.seed(12345)
+  MCMC_Joint_S_ML<-run_multinomial_univariate_mcmc(X, y,
+                                                   nit=nit, nmc=nmc, nthin=nthin,
+                                                   tau2=tau2,lamda2=lamda2,
+                                                   proposal_step=proposal_step,
+                                                   S_update_method = "joint",
+                                                   R_update_method = "grid")
+  
+  
+  
+  Joint_S_beta_ML<-MCMC_Joint_S_ML$beta_final_vector
+  Joint_S_sigma_ML<-MCMC_Joint_S_ML$sigma2_final
+  Joint_S_S_ML<-MCMC_Joint_S_ML$S_final
+  Joint_S_R_ML<-MCMC_Joint_S_ML$R_final
+  
+  
+  
+  
+  test_X_list[[cv]]<-X_test  
+  test_Y_list[[cv]]<-y_test
+  beta_final_vector_list[[cv]]<-Joint_S_beta_ML
+  sigma2_final_list[[cv]]<-Joint_S_sigma_ML
+  
+}
+
+
+nsamples<-nmc/nthin
+
+set.seed(12345)
+estimated_PP_P<-list()
+
+for(ll in 1:length(test_X_list)){
+  
+  test_x_tilda_P<- diag((k-1)) %x%  unique(test_X_list[[ll]])
+  beta_final_vector_P<-beta_final_vector_list[[ll]]
+  
+  
+  estimated_PP<-array(NA,c(1,k,nsamples))
+  
+  for(iter in 1: nsamples){
+    test_X_BETA_P<-colSums(t(test_x_tilda_P)* c(beta_final_vector_P[,iter]))
+    test_X_BETA_P<-matrix( test_X_BETA_P, ncol= (k-1))
+    
+    sigma2_final_list_P<-sigma2_final_list[[ll]][,,iter]
+    
+    estimated_PP[,,iter]<- apply(matrix(1:k,ncol=1),1,new_probability_mnp_1response,mu=test_X_BETA_P,sigma=sigma2_final_list_P,r=250,Halton_choice=FALSE)
+    
+  }
+  
+  estimated_PP_P[[ll]]<-estimated_PP
+}
+
+
+
+
+
+full_probability_mat<-abind(estimated_PP_P,along = 1)
+
+# Pre-allocate
+pred_lb_HPDI <- matrix(NA, nrow = dim(full_probability_mat)[1], ncol = dim(full_probability_mat)[2])
+pred_ub_HPDI <- matrix(NA, nrow = dim(full_probability_mat)[1], ncol = dim(full_probability_mat)[2])
+
+# Loop over rows and categories
+for(i in 1:dim(full_probability_mat)[1]) {
+  for(j in 1:dim(full_probability_mat)[2]) {
+    draws <- full_probability_mat[i, j, ]
+    
+    # 95% HDI
+    hdi_vals <- hdi(draws, credMass = 0.95)
+    pred_lb_HPDI[i, j] <- round(hdi_vals[1],3)
+    pred_ub_HPDI[i, j] <- round(hdi_vals[2],3)
+  }
+}
+
+
+
+
+final_y_test<-unlist(test_Y_list)
+final_x_test<-do.call(rbind, test_X_list)
+
+
+bbb<-unique(final_x_test)
+yy<-list()
+
+
+for(i in 1:nrow(bbb))
+{
+  yy[[i]]<-final_y_test[which(rowSums(abs(t(t(final_x_test)-bbb[i,])))==0)]
+}
+
+
+test_proportion_of_success<-matrix(NA,ncol=k,nrow=nrow(bbb))
+for(i in 1:nrow(bbb))
+{
+  for(j in 1:k )
+  {
+    test_proportion_of_success[i,j]<- sum((yy[[i]])==j)/length(yy[[i]])
+  }
+  
+}
+
+colnames(test_proportion_of_success)<-c("Percent_of_1","Percent_of_2","Percent_of_3","Percent_of_4")
+
+
+
+#####################################
+# To generate 1st block of Table 6 
+#####################################
+
+# Combine components into "p (lb, ub)"
+p  <- round(test_proportion_of_success, 3)
+lb <- round(pred_lb_HPDI, 3)
+ub <- round(pred_ub_HPDI, 3)
+
+cell <- matrix("", nrow = nrow(p), ncol = ncol(p))
+
+for (i in 1:nrow(p)) {
+  for (j in 1:ncol(p)) {
+    cell[i, j] <- sprintf("%0.3f (%0.3f, %0.3f)", p[i,j], lb[i,j], ub[i,j])
+  }
+}
+
+colnames(cell) <- c("Category 0", "Category 1", "Category 2", "Category 3")
+
+
+print(unq_row_of_X)
+
+# Print nicely in R console
+kable(cell, align = "c", caption = "cross-validation output for perception of Mental Illness")
+
+
+
+
+
+
+
+
+#############################
+# For Alcohol & Drug Abuse
+
+# set response_ID<-2 and run code lines from 30 to 86 
+#you can skip line 67 if you already have the output
+
+
+unq_row_of_X<-unique(as.matrix(X) )
+
+# Step 1: Get counts
+check_no_of_each_combination <- sapply(1:nrow(unq_row_of_X), function(i) {
+  sum(rowSums(abs(t(t(X) - unq_row_of_X[i, ]))) == 0)
+})
+
+target_count <- 30   
+
+# Step 3: Get the index (first match) of the row with target count
+target_index <- which(check_no_of_each_combination >= target_count)  # in case of multiple matches
+
+# Step 4: Extract the row
+unq_row_of_X <- unq_row_of_X[target_index, , drop = FALSE]
+
+
+
+test_X_list<-list()
+test_Y_list<-list()
+beta_final_vector_list<-list()
+sigma2_final_list<-list()
+
+for(cv in 1:nrow(unq_row_of_X)){
+  
+  
+  # Get the first row of unq_row_of_X
+  target_row <- unq_row_of_X[cv, ]
+  
+  # Find the matching row(s) in x1
+  index <- which(apply(X1, 1, function(row) all(row == target_row)))
+  
+  test_data<- as.matrix( data[index,] )
+  train_data<- as.matrix( data[-index,])
+  
+  
+  X<- as.matrix( train_data[,-1])
+  y<- as.numeric(train_data[,1])
+  n<-length(y)
+  
+  
+  
+  X_test<- as.matrix( test_data[,-1])
+  y_test<- as.numeric(test_data[,1])
+  
+  test_x_tilda<- diag((k-1)) %x% X_test 
+  n_test<- length(y_test)
+  
+  
+  set.seed(12345)
+  MCMC_Joint_S_AL<-run_multinomial_univariate_mcmc(X, y,
+                                                   nit=nit, nmc=nmc, nthin=nthin,
+                                                   tau2=tau2,lamda2=lamda2,
+                                                   proposal_step=proposal_step,
+                                                   S_update_method = "joint",
+                                                   R_update_method = "grid")
+  
+  
+  
+  Joint_S_beta_AL<-MCMC_Joint_S_AL$beta_final_vector
+  Joint_S_sigma_AL<-MCMC_Joint_S_AL$sigma2_final
+  Joint_S_S_AL<-MCMC_Joint_S_AL$S_final
+  Joint_S_R_AL<-MCMC_Joint_S_AL$R_final
+  
+  
+  
+  
+  test_X_list[[cv]]<-X_test  
+  test_Y_list[[cv]]<-y_test
+  beta_final_vector_list[[cv]]<-Joint_S_beta_AL
+  sigma2_final_list[[cv]]<-Joint_S_sigma_AL
+  
+}
+
+
+nsamples<-nmc/nthin
+
+set.seed(12345)
+estimated_PP_P<-list()
+
+for(ll in 1:length(test_X_list)){
+  
+  test_x_tilda_P<- diag((k-1)) %x%  unique(test_X_list[[ll]])
+  beta_final_vector_P<-beta_final_vector_list[[ll]]
+  
+  
+  estimated_PP<-array(NA,c(1,k,nsamples))
+  
+  for(iter in 1: nsamples){
+    test_X_BETA_P<-colSums(t(test_x_tilda_P)* c(beta_final_vector_P[,iter]))
+    test_X_BETA_P<-matrix( test_X_BETA_P, ncol= (k-1))
+    
+    sigma2_final_list_P<-sigma2_final_list[[ll]][,,iter]
+    
+    estimated_PP[,,iter]<- apply(matrix(1:k,ncol=1),1,new_probability_mnp_1response,mu=test_X_BETA_P,sigma=sigma2_final_list_P,r=250,Halton_choice=FALSE)
+    
+  }
+  
+  estimated_PP_P[[ll]]<-estimated_PP
+}
+
+
+
+
+
+full_probability_mat<-abind(estimated_PP_P,along = 1)
+
+# Pre-allocate
+pred_lb_HPDI <- matrix(NA, nrow = dim(full_probability_mat)[1], ncol = dim(full_probability_mat)[2])
+pred_ub_HPDI <- matrix(NA, nrow = dim(full_probability_mat)[1], ncol = dim(full_probability_mat)[2])
+
+# Loop over rows and categories
+for(i in 1:dim(full_probability_mat)[1]) {
+  for(j in 1:dim(full_probability_mat)[2]) {
+    draws <- full_probability_mat[i, j, ]
+    
+    # 95% HDI
+    hdi_vals <- hdi(draws, credMass = 0.95)
+    pred_lb_HPDI[i, j] <- round(hdi_vals[1],3)
+    pred_ub_HPDI[i, j] <- round(hdi_vals[2],3)
+  }
+}
+
+
+
+
+final_y_test<-unlist(test_Y_list)
+final_x_test<-do.call(rbind, test_X_list)
+
+
+bbb<-unique(final_x_test)
+yy<-list()
+
+
+for(i in 1:nrow(bbb))
+{
+  yy[[i]]<-final_y_test[which(rowSums(abs(t(t(final_x_test)-bbb[i,])))==0)]
+}
+
+
+test_proportion_of_success<-matrix(NA,ncol=no_category,nrow=nrow(bbb))
+for(i in 1:nrow(bbb))
+{
+  for(j in 1:no_category )
+  {
+    test_proportion_of_success[i,j]<- sum((yy[[i]])==j)/length(yy[[i]])
+  }
+  
+}
+
+colnames(test_proportion_of_success)<-c("Percent_of_1","Percent_of_2","Percent_of_3","Percent_of_4")
+
+
+
+
+#####################################
+# To generate 2st block of Table 6 
+#####################################
+
+# Combine components into "p (lb, ub)"
+p  <- round(test_proportion_of_success, 3)
+lb <- round(pred_lb_HPDI, 3)
+ub <- round(pred_ub_HPDI, 3)
+
+cell <- matrix("", nrow = nrow(p), ncol = ncol(p))
+
+for (i in 1:nrow(p)) {
+  for (j in 1:ncol(p)) {
+    cell[i, j] <- sprintf("%0.3f (%0.3f, %0.3f)", p[i,j], lb[i,j], ub[i,j])
+  }
+}
+
+colnames(cell) <- c("Category 0", "Category 1", "Category 2", "Category 3")
+
+
+print(unq_row_of_X)
+
+# Print nicely in R console
+kable(cell, align = "c", caption = "cross-validation output for perception of Alcohol & Drug Abuse")
+
+
+```
+
