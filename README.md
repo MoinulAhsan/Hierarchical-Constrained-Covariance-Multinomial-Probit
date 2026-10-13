@@ -1,8 +1,4 @@
-# Hierarchical Constrained Covariance Models for Multinomial Probit Regression
-
-R code and supporting material for the manuscript:
-
-**A novel hierarchical constrained covariance model in multinomial probit regression for single- and multi-response datasets**
+# A novel hierarchical constrained covariance model in multinomial probit regression for single- and multi-response datasets
 
 **Authors:** Md. Moinul Ahsan (Virginia Commonwealth University) and Avishek Chakraborty (University of Arkansas).
 
@@ -27,7 +23,7 @@ The repository includes Markov chain Monte Carlo (MCMC) implementations, simulat
 ## Repository contents
 
 | File or directory | Purpose |
-|----|----|
+|------------------------------------|------------------------------------|
 | `Additional_functions.R` | Supporting functions used by analyses |
 | `univariate_MCMC.R` | Single-response MNP MCMC |
 | `Bivariate_joint_S.R` | Bivariate MNP with joint updating of scale parameters |
